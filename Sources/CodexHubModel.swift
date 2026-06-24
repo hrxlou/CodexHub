@@ -79,10 +79,6 @@ final class CodexHubModel: ObservableObject {
                 self.accounts = accounts
                 self.usage = usage
                 self.quotaAPIStatus = listed.quotaAPIStatus
-                if listed.autoDisabledAPI {
-                    self.settings.quotaAPIEnabled = false
-                    self.settings.statusMessage = "Quota API failed; switched to local quota mode"
-                }
                 self.lastError = listed.error ?? usage.lastError
                 self.lastRefreshDate = Date()
                 self.switchingAccountEmail = nil
@@ -153,8 +149,6 @@ final class CodexHubModel: ObservableObject {
 
     func setQuotaAPIEnabled(_ enabled: Bool) {
         guard settings.quotaAPIEnabled != enabled || quotaAPIStatus == .failed else { return }
-        settings.quotaAPIEnabled = enabled
-        quotaAPIStatus = enabled ? .on : .off
         isRefreshing = true
         DispatchQueue.global(qos: .userInitiated).async {
             let result = self.authService.setQuotaAPIEnabled(enabled)
@@ -166,6 +160,8 @@ final class CodexHubModel: ObservableObject {
                     self.isRefreshing = false
                     self.refresh(force: true)
                 } else {
+                    self.settings.quotaAPIEnabled = enabled
+                    self.quotaAPIStatus = enabled ? .on : .off
                     self.settings.statusMessage = enabled ? "Quota API enabled" : "Quota API disabled"
                     self.isRefreshing = false
                     self.refresh(force: true)
