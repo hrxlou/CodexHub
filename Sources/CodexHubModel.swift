@@ -1,3 +1,5 @@
+import AppKit
+import Combine
 import Foundation
 import SwiftUI
 import UserNotifications
@@ -17,10 +19,14 @@ final class CodexHubModel: ObservableObject {
     @Published var quotaAPIStatus: CodexAuthService.QuotaAPIStatus = .off
     @Published var lastRefreshDate: Date?
     private var refreshTimer: Timer?
+    private var settingsCancellable: AnyCancellable?
     private var lastReminderSignature: String?
     private var lastAutoSwitchSignature: String?
 
     init() {
+        settingsCancellable = settings.objectWillChange.sink { [weak self] _ in
+            self?.objectWillChange.send()
+        }
         refresh(force: true)
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
             self?.refresh(force: false)
@@ -85,14 +91,14 @@ final class CodexHubModel: ObservableObject {
     func accountMenuTitle(_ account: CodexAccount) -> String {
         let marker = account.isActive ? "*" : " "
         let accountUsage = usage.todayByAccount[account.email] ?? .zero
-        return "\(marker) \(account.label)  5H \(Format.percentUsed(account.fiveHourUsedPercent))  W \(Format.percentUsed(account.weeklyUsedPercent))  Today \(Format.summary(accountUsage))  \(compactEmail(account.email))"
+        return "\(marker) \(account.label)  5H \(Format.percentUsed(account.fiveHourUsedPercent))  W \(Format.percentUsed(account.weeklyUsedPercent))  \(L.today) \(Format.summary(accountUsage))  \(compactEmail(account.email))"
     }
 
     func displayName(for email: String) -> String {
         if let account = accounts.first(where: { $0.email == email }) {
             return "\(account.label) \(compactEmail(email))"
         }
-        return email == "Unknown" ? "Unknown" : compactEmail(email)
+        return email == "Unknown" ? L.text(ko: "알 수 없음", en: "Unknown") : compactEmail(email)
     }
 
     func compactEmail(_ email: String) -> String {
@@ -150,13 +156,13 @@ final class CodexHubModel: ObservableObject {
                 if result.status != 0 {
                     self.quotaAPIStatus = .failed
                     let message = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
-                    self.settings.statusMessage = message.isEmpty ? "Quota API update failed" : message
+                    self.settings.statusMessage = message.isEmpty ? L.quotaAPIUpdateFailed : message
                     self.isRefreshing = false
                     self.refresh(force: true)
                 } else {
                     self.settings.quotaAPIEnabled = enabled
                     self.quotaAPIStatus = enabled ? .on : .off
-                    self.settings.statusMessage = enabled ? "Quota API enabled" : "Quota API disabled"
+                    self.settings.statusMessage = enabled ? L.quotaAPIEnabled : L.quotaAPIDisabled
                     self.isRefreshing = false
                     self.refresh(force: true)
                 }
@@ -167,7 +173,7 @@ final class CodexHubModel: ObservableObject {
     func resetAttributionHistory() {
         attributionStore.resetHistory(currentEmail: activeAccount?.email)
         usageDetails = nil
-        settings.statusMessage = "Attribution history reset"
+        settings.statusMessage = L.attributionHistoryReset
         refresh(force: true)
     }
 
@@ -184,7 +190,8 @@ final class CodexHubModel: ObservableObject {
             }
         }
 
-        guard settings.autoSwitchEnabled && remaining <= settings.autoSwitchThreshold else { return }
+        let switchThreshold = settings.autoSwitchThreshold
+        guard settings.autoSwitchEnabled && remaining <= switchThreshold else { return }
         let candidates = accounts
             .filter { !$0.isActive }
             .compactMap { account -> (CodexAccount, Int)? in
@@ -192,21 +199,35 @@ final class CodexHubModel: ObservableObject {
                 return (account, candidateRemaining)
             }
             .filter { $0.1 > remaining }
+            .filter { $0.1 > switchThreshold }
             .sorted { left, right in
                 if left.1 != right.1 { return left.1 > right.1 }
                 return left.0.label < right.0.label
             }
         guard let best = candidates.first else { return }
-        let signature = "\(active.email)->\(best.0.email)-\(used)"
+        let signature = "\(active.email):\(remaining)->\(best.0.email):\(best.1)-\(switchThreshold)"
         guard signature != lastAutoSwitchSignature else { return }
         lastAutoSwitchSignature = signature
-        switchAccount(best.0.email)
+        promptAutoSwitch(from: active, to: best.0, activeRemaining: remaining, candidateRemaining: best.1)
+    }
+
+    private func promptAutoSwitch(from active: CodexAccount, to candidate: CodexAccount, activeRemaining: Int, candidateRemaining: Int) {
+        let alert = NSAlert()
+        alert.alertStyle = .informational
+        alert.messageText = L.switchCodexAccount
+        alert.informativeText = L.autoSwitchMessage(activeLabel: active.label, activeRemaining: activeRemaining, candidateLabel: candidate.label, candidateRemaining: candidateRemaining)
+        alert.addButton(withTitle: L.switchAccount)
+        alert.addButton(withTitle: L.notNow)
+        NSApp.activate(ignoringOtherApps: true)
+        if alert.runModal() == .alertFirstButtonReturn {
+            switchAccount(candidate.email)
+        }
     }
 
     private func sendUsageReminder(account: CodexAccount, used: Int, remaining: Int) {
         let content = UNMutableNotificationContent()
-        content.title = "CodexHub usage reminder"
-        content.body = "\(account.label) account has used \(used)% of the 5H limit. \(remaining)% remains."
+        content.title = L.usageReminderTitle
+        content.body = L.usageReminderBody(accountLabel: account.label, used: used, remaining: remaining)
         content.sound = .default
         let identifier = "codexhub-usage-\(account.email.hashValue)-\(used)"
         let request = UNNotificationRequest(identifier: identifier, content: content, trigger: nil)

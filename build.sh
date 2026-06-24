@@ -18,7 +18,7 @@ if [[ ! -f "$ROOT_DIR/Resources/CodexHub.icns" || ! -f "$ROOT_DIR/Resources/Code
   xcrun swift "$ROOT_DIR/Tools/GenerateIcon.swift" "$ROOT_DIR"
 fi
 
-cp "$ROOT_DIR/Resources/ModelPricing.json" "$RESOURCES_DIR/ModelPricing.json"
+cp "$ROOT_DIR/Resources/PriceBook.json" "$RESOURCES_DIR/PriceBook.json"
 cp "$ROOT_DIR/Resources/CodexHub.icns" "$RESOURCES_DIR/CodexHub.icns"
 cp "$ROOT_DIR/Resources/CodexHubIcon.png" "$RESOURCES_DIR/CodexHubIcon.png"
 cp "$ROOT_DIR/Resources/CodexHubMenuIcon.png" "$RESOURCES_DIR/CodexHubMenuIcon.png"

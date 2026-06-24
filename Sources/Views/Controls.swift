@@ -135,7 +135,7 @@ struct AccountCardView: View {
         } label: {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(alignment: .center) {
-                    Text(account.isActive ? "Active" : "Switch")
+                    Text(account.isActive ? L.active : L.switchAccount)
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(account.isActive ? Color.white : Color.primary)
                         .padding(.horizontal, 10)
@@ -170,7 +170,7 @@ struct AccountCardView: View {
         .buttonStyle(.plain)
         .allowsHitTesting(!account.isActive && !model.isSwitchingAccount)
         .onHover { hovering = $0 }
-        .help(account.isActive ? "Active account" : "Switch to \(account.email)")
+        .help(account.isActive ? L.activeAccount : L.switchToAccount(account.email))
     }
 
     private func quotaRow(label: String, percent: String, reset: String) -> some View {

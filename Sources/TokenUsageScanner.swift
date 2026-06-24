@@ -27,26 +27,32 @@ private struct TokenFootprint: Codable, Equatable {
     let lastTurn: TokenTotals?
 }
 
-private struct SessionUsageEntry: Codable {
+private struct SessionUsageEntry: Codable, Equatable {
     let timestamp: Date
     let aggregate: UsageAggregate
 }
 
-private struct SessionFileRecord: Codable {
+private struct SessionFileRecord: Codable, Equatable {
     var path: String
     var byteCount: UInt64
     var modifiedAt: Date?
     var parsedOffset: UInt64
+    var appendFingerprint: String?
     var lastModel: String?
     var previousTotals: TokenTotals?
     var previousFootprint: TokenFootprint?
     var usageEvents: [SessionUsageEntry]
 }
 
-private struct UsageLedger: Codable {
+private struct UsageLedger: Codable, Equatable {
     var version: Int
     var savedAt: Date
     var files: [String: SessionFileRecord]
+}
+
+private struct LedgerLoadResult {
+    var ledger: UsageLedger
+    var loadedFromCache: Bool
 }
 
 private struct FileMetadata {
@@ -84,7 +90,10 @@ private struct UsageAttribution {
 
     func email(for date: Date) -> String {
         if date < todayStart {
-            return historicalEmail ?? "Unknown"
+            if let historicalEmail {
+                return historicalEmail
+            }
+            return attribution.accountEmail(at: date)
         }
         let resolved = attribution.accountEmail(at: date)
         if resolved == "Unknown" {
@@ -134,7 +143,7 @@ final class TokenUsageScanner {
         let todayStart = calendar.startOfDay(for: now)
         let weekStart = calendar.dateInterval(of: .weekOfYear, for: now)?.start ?? todayStart
         let monthStart = calendar.dateInterval(of: .month, for: now)?.start ?? weekStart
-        let result = scanSessions(from: monthStart, attribution: attribution, accounts: accounts)
+        let result = scanSessions(from: min(weekStart, monthStart), attribution: attribution, accounts: accounts)
         switch result {
         case .failure(let failure):
             return UsageDetailSnapshot(today: .zero, week: .zero, month: .zero, weekByAccount: [:], monthByAccount: [:], recentDaily: [], scannedFiles: 0, lastError: failure.message)
@@ -158,7 +167,7 @@ final class TokenUsageScanner {
             .appendingPathComponent("sessions", isDirectory: true)
 
         guard fileManager.fileExists(atPath: root.path) else {
-            return .failure(UsageScanFailure(message: "~/.codex/sessions not found"))
+            return .failure(UsageScanFailure(message: L.text(ko: "~/.codex/sessions를 찾을 수 없습니다", en: "~/.codex/sessions not found")))
         }
 
         let calendar = Calendar.current
@@ -166,18 +175,32 @@ final class TokenUsageScanner {
         let todayStart = calendar.startOfDay(for: now)
         let weekStart = calendar.dateInterval(of: .weekOfYear, for: now)?.start ?? todayStart
         let monthStart = calendar.dateInterval(of: .month, for: now)?.start ?? weekStart
+        let retentionStart = min(weekStart, monthStart)
         let files = jsonlFiles(in: root, from: rangeStart, through: now, calendar: calendar)
-        var ledger = loadLedger()
+        let loaded = loadLedger()
+        var ledger = loaded.ledger
+        var ledgerChanged = false
 
         for url in files {
             guard let metadata = metadata(for: url) else { continue }
+            let existing = ledger.files[metadata.path]
             let record = updateRecord(for: url, metadata: metadata, existing: ledger.files[metadata.path], calendar: calendar)
-            ledger.files[metadata.path] = record
+            if existing != record {
+                ledger.files[metadata.path] = record
+                ledgerChanged = true
+            }
         }
 
-        pruneExpiredRecords(&ledger, now: now, calendar: calendar)
-        ledger.savedAt = Date()
-        saveLedger(ledger)
+        if pruneExpiredRecords(&ledger, retentionStart: retentionStart) {
+            ledgerChanged = true
+        }
+        if ledgerChanged {
+            ledger.savedAt = now
+            saveLedger(ledger)
+        }
+        if loaded.loadedFromCache || ledgerChanged {
+            cleanupLegacyCachesIfSafe()
+        }
 
         let attributionPolicy = UsageAttribution(
             historicalEmail: historicalAccountEmail(from: accounts),
@@ -185,7 +208,7 @@ final class TokenUsageScanner {
             attribution: attribution
         )
         let rollup = makeRollup(
-            records: Array(ledger.files.values),
+            records: ledger.files.values,
             todayStart: todayStart,
             weekStart: weekStart,
             monthStart: monthStart,
@@ -202,9 +225,7 @@ final class TokenUsageScanner {
             return existing
         }
 
-        let canAppend = existing != nil
-            && metadata.byteCount > (existing?.parsedOffset ?? 0)
-            && (existing?.parsedOffset ?? 0) > 0
+        let canAppend = canAppendSafely(to: url, metadata: metadata, existing: existing)
         let startOffset = canAppend ? existing?.parsedOffset ?? 0 : 0
         var state = RunningParseState(
             lastModel: canAppend ? existing?.lastModel : nil,
@@ -219,11 +240,28 @@ final class TokenUsageScanner {
             byteCount: metadata.byteCount,
             modifiedAt: metadata.modifiedAt,
             parsedOffset: parsedOffset,
+            appendFingerprint: appendFingerprint(for: url, upTo: parsedOffset),
             lastModel: state.lastModel,
             previousTotals: state.previousTotals,
             previousFootprint: state.previousFootprint,
             usageEvents: state.usageEvents
         )
+    }
+
+    private func canAppendSafely(to url: URL, metadata: FileMetadata, existing: SessionFileRecord?) -> Bool {
+        guard let existing,
+              existing.parsedOffset > 0,
+              existing.byteCount == existing.parsedOffset,
+              metadata.byteCount > existing.parsedOffset,
+              metadata.byteCount >= existing.byteCount,
+              let fingerprint = existing.appendFingerprint else {
+            return false
+        }
+
+        // JSONL session files are expected to grow append-only. Before parsing only
+        // the new bytes, verify the previously parsed prefix still matches the
+        // ledger; legacy records without this fingerprint are fully reparsed once.
+        return appendFingerprint(for: url, upTo: existing.parsedOffset) == fingerprint
     }
 
     private func streamFile(_ url: URL, from offset: UInt64, calendar: Calendar, state: inout RunningParseState) -> UInt64? {
@@ -313,7 +351,7 @@ final class TokenUsageScanner {
     }
 
     private func makeRollup(
-        records: [SessionFileRecord],
+        records: some Sequence<SessionFileRecord>,
         todayStart: Date,
         weekStart: Date,
         monthStart: Date,
@@ -327,8 +365,10 @@ final class TokenUsageScanner {
         var weekByAccount: [String: UsageAggregate] = [:]
         var monthByAccount: [String: UsageAggregate] = [:]
         var daily: [Date: UsageAggregate] = [:]
+        var recordCount = 0
 
         for record in records {
+            recordCount += 1
             for entry in record.usageEvents {
                 guard entry.timestamp >= monthStart else { continue }
                 let date = calendar.startOfDay(for: entry.timestamp)
@@ -356,7 +396,7 @@ final class TokenUsageScanner {
             weekByAccount: weekByAccount,
             monthByAccount: monthByAccount,
             recentDaily: daily.map { ($0.key, $0.value) }.sorted { $0.0 > $1.0 },
-            scannedFiles: records.count
+            scannedFiles: recordCount
         )
     }
 
@@ -396,13 +436,46 @@ final class TokenUsageScanner {
         return FileMetadata(path: url.path, byteCount: UInt64(max(fileSize, 0)), modifiedAt: values.contentModificationDate)
     }
 
-    private func loadLedger() -> UsageLedger {
+    private func appendFingerprint(for url: URL, upTo offset: UInt64) -> String? {
+        guard offset > 0, let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+
+        let window: UInt64 = 4096
+        let headLength = min(window, offset)
+        let tailStart = offset > window ? offset - window : 0
+        let tailLength = offset - tailStart
+        var sample = Data()
+
+        do {
+            try handle.seek(toOffset: 0)
+            sample.append(handle.readData(ofLength: Int(headLength)))
+            if tailStart > headLength {
+                try handle.seek(toOffset: tailStart)
+                sample.append(handle.readData(ofLength: Int(tailLength)))
+            }
+        } catch {
+            return nil
+        }
+
+        return "\(offset):\(fnv1a64(sample))"
+    }
+
+    private func fnv1a64(_ data: Data) -> String {
+        var hash: UInt64 = 0xcbf29ce484222325
+        for byte in data {
+            hash ^= UInt64(byte)
+            hash = hash &* 0x100000001b3
+        }
+        return String(format: "%016llx", hash)
+    }
+
+    private func loadLedger() -> LedgerLoadResult {
         guard let data = try? Data(contentsOf: cacheURL),
               let ledger = try? JSONDecoder.codexHub.decode(UsageLedger.self, from: data),
               ledger.version == 2 else {
-            return UsageLedger(version: 2, savedAt: Date(), files: [:])
+            return LedgerLoadResult(ledger: UsageLedger(version: 2, savedAt: Date(), files: [:]), loadedFromCache: false)
         }
-        return ledger
+        return LedgerLoadResult(ledger: ledger, loadedFromCache: true)
     }
 
     private func saveLedger(_ ledger: UsageLedger) {
@@ -428,11 +501,41 @@ final class TokenUsageScanner {
         }?.email ?? accounts.first?.email
     }
 
-    private func pruneExpiredRecords(_ ledger: inout UsageLedger, now: Date, calendar: Calendar) {
-        guard let cutoff = calendar.date(byAdding: .day, value: -120, to: now) else { return }
-        ledger.files = ledger.files.filter { _, record in
-            guard let modifiedAt = record.modifiedAt else { return true }
-            return modifiedAt >= cutoff
+    private func pruneExpiredRecords(_ ledger: inout UsageLedger, retentionStart: Date) -> Bool {
+        var changed = false
+        var retained: [String: SessionFileRecord] = [:]
+        retained.reserveCapacity(ledger.files.count)
+        for (path, record) in ledger.files {
+            var next = record
+            let currentEvents = record.usageEvents.filter { $0.timestamp >= retentionStart }
+            if currentEvents.count != record.usageEvents.count {
+                next.usageEvents = currentEvents
+                changed = true
+            }
+            if next.usageEvents.isEmpty,
+               let modifiedAt = next.modifiedAt,
+               modifiedAt < retentionStart {
+                changed = true
+                continue
+            }
+            retained[path] = next
+        }
+        if retained.count != ledger.files.count {
+            changed = true
+        }
+        if changed {
+            ledger.files = retained
+        }
+        return changed
+    }
+
+    private func cleanupLegacyCachesIfSafe() {
+        let directory = cacheURL.deletingLastPathComponent()
+        for filename in ["usage-ledger-v1.json", "usage-detail-cache.json"] {
+            let url = directory.appendingPathComponent(filename)
+            if fileManager.fileExists(atPath: url.path) {
+                try? fileManager.removeItem(at: url)
+            }
         }
     }
 

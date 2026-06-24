@@ -1,0 +1,116 @@
+{
+  "schema": 1,
+  "fallback": {
+    "inputPerMTok": 1.25,
+    "cachedInputPerMTok": 0.125,
+    "outputPerMTok": 10.0
+  },
+  "entries": [
+    {
+      "models": [
+        "gpt-5",
+        "gpt-5-chat-latest",
+        "gpt-5-codex",
+        "gpt-5.1",
+        "gpt-5.1-codex"
+      ],
+      "price": {
+        "inputPerMTok": 1.25,
+        "cachedInputPerMTok": 0.125,
+        "outputPerMTok": 10.0
+      }
+    },
+    {
+      "models": [
+        "gpt-5-mini",
+        "gpt-5.1-codex-mini"
+      ],
+      "price": {
+        "inputPerMTok": 0.25,
+        "cachedInputPerMTok": 0.025,
+        "outputPerMTok": 2.0
+      }
+    },
+    {
+      "models": [
+        "gpt-5-nano"
+      ],
+      "price": {
+        "inputPerMTok": 0.05,
+        "cachedInputPerMTok": 0.005,
+        "outputPerMTok": 0.4
+      }
+    },
+    {
+      "models": [
+        "gpt-5-pro"
+      ],
+      "price": {
+        "inputPerMTok": 15.0,
+        "outputPerMTok": 120.0
+      }
+    },
+    {
+      "models": [
+        "gpt-5.2",
+        "gpt-5.2-chat-latest",
+        "gpt-5.2-codex",
+        "gpt-5.3-chat-latest",
+        "gpt-5.3-codex"
+      ],
+      "price": {
+        "inputPerMTok": 1.75,
+        "cachedInputPerMTok": 0.175,
+        "outputPerMTok": 14.0
+      }
+    },
+    {
+      "models": [
+        "gpt-5.2-pro"
+      ],
+      "price": {
+        "inputPerMTok": 21.0,
+        "outputPerMTok": 168.0
+      }
+    },
+    {
+      "models": [
+        "gpt-5.4"
+      ],
+      "price": {
+        "inputPerMTok": 2.5,
+        "cachedInputPerMTok": 0.25,
+        "outputPerMTok": 15.0
+      }
+    },
+    {
+      "models": [
+        "gpt-5.4-pro"
+      ],
+      "price": {
+        "inputPerMTok": 30.0,
+        "outputPerMTok": 180.0
+      }
+    },
+    {
+      "models": [
+        "gpt-5.5"
+      ],
+      "price": {
+        "inputPerMTok": 5.0,
+        "cachedInputPerMTok": 0.5,
+        "outputPerMTok": 30.0
+      }
+    }
+  ],
+  "alias": [
+    {
+      "from": "gpt-5.1-codex-max",
+      "to": "gpt-5.1-codex"
+    },
+    {
+      "from": "gpt-5.3-codex-spark",
+      "to": "gpt-5.3-codex"
+    }
+  ]
+}
