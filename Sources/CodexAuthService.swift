@@ -19,7 +19,7 @@ final class CodexAuthService {
             switch self {
             case .on: return L.text(ko: "켜짐", en: "On")
             case .off: return L.text(ko: "꺼짐", en: "Off")
-            case .fallback: return L.text(ko: "대체 사용", en: "Fallback")
+            case .fallback: return L.text(ko: "참고 표시", en: "Fallback")
             case .failed: return L.text(ko: "실패", en: "Failed")
             }
         }
@@ -33,7 +33,7 @@ final class CodexAuthService {
         let result = runCodexAuth(["list"], timeout: 8)
         guard result.status == 0 else {
             let message = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
-            return ([], message.isEmpty ? L.text(ko: "codex-auth list 실패", en: "codex-auth list failed") : message, .failed, false)
+            return ([], message.isEmpty ? L.text(ko: "codex-auth 목록을 불러오지 못했습니다", en: "codex-auth list failed") : message, .failed, false)
         }
 
         let parsed = parseAccounts(result.output)
@@ -42,7 +42,7 @@ final class CodexAuthService {
         if fallback.usedAppServer {
             status = .fallback
         }
-        let error = parsed.isEmpty ? L.text(ko: "codex-auth 계정을 찾을 수 없습니다", en: "No codex-auth accounts found") : fallback.notice
+        let error = parsed.isEmpty ? L.text(ko: "codex-auth에 설정된 계정이 없습니다", en: "No codex-auth accounts found") : fallback.notice
         return (fallback.accounts, error, status, false)
     }
 
@@ -102,15 +102,15 @@ final class CodexAuthService {
             let updated = accounts.map { account in
                 account.isActive ? account.withUnavailableRateLimitsIfNeeded() : account
             }
-            return (updated, false, L.text(ko: "활성 계정의 로컬 상태 정보를 사용할 수 없습니다", en: "Active account local status unavailable"))
+            return (updated, false, L.text(ko: "활성 계정의 로컬 상태를 확인할 수 없습니다", en: "Active account local status unavailable"))
         }
         let limits = lookup.limits
         let updated = accounts.map { account in
             account.isActive ? account.applyingAppServerRateLimits(limits) : account
         }
         let notice = lookup.fromCache
-            ? L.text(ko: "활성 계정에 캐시된 로컬 상태 정보를 표시 중입니다", en: "Using cached local status fallback for active account only")
-            : L.text(ko: "활성 계정에 로컬 상태 정보를 표시 중입니다", en: "Using local status fallback for active account only")
+            ? L.text(ko: "활성 계정에 저장된 로컬 상태를 표시 중입니다", en: "Using cached local status fallback for active account only")
+            : L.text(ko: "활성 계정의 로컬 상태를 표시 중입니다", en: "Using local status fallback for active account only")
         return (updated, true, notice)
     }
 
@@ -285,7 +285,7 @@ final class CodexAuthService {
 
     private func runCodexAuth(_ args: [String], timeout: TimeInterval) -> CommandResult {
         guard let path = codexAuthPath() else {
-            return CommandResult(status: 127, output: L.text(ko: "codex-auth를 찾을 수 없습니다", en: "codex-auth was not found"))
+            return CommandResult(status: 127, output: L.text(ko: "codex-auth를 찾지 못했습니다", en: "codex-auth was not found"))
         }
         return run(path, args, timeout: timeout)
     }
@@ -377,7 +377,7 @@ final class CodexAuthService {
                 }
                 pipe.fileHandleForReading.readabilityHandler = nil
                 let text = drainedOutput(from: pipe, accumulated: output, lock: lock)
-                return CommandResult(status: 124, output: L.text(ko: "명령 시간이 초과되었습니다", en: "Command timed out") + ": \(URL(fileURLWithPath: executable).lastPathComponent) \(args.joined(separator: " "))\n\(text)")
+                return CommandResult(status: 124, output: L.text(ko: "명령 실행 시간이 초과됐습니다", en: "Command timed out") + ": \(URL(fileURLWithPath: executable).lastPathComponent) \(args.joined(separator: " "))\n\(text)")
             }
             pipe.fileHandleForReading.readabilityHandler = nil
             return CommandResult(status: process.terminationStatus, output: drainedOutput(from: pipe, accumulated: output, lock: lock))

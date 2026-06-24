@@ -10,6 +10,7 @@ final class CodexHubModel: ObservableObject {
     private let attributionStore = AttributionStore()
     private let workQueue = DispatchQueue(label: "local.codexhub.model-work", qos: .utility)
     private let minimumRefreshInterval: TimeInterval = 60
+    private let minimumDetailsRefreshInterval: TimeInterval = 30 * 60
     let settings = HubSettings()
     @Published var accounts: [CodexAccount] = []
     @Published var usage = UsageSnapshot(today: .zero, todayByAccount: [:], recentDaily: [], scannedFiles: 0, lastError: nil)
@@ -24,6 +25,7 @@ final class CodexHubModel: ObservableObject {
     private var settingsCancellable: AnyCancellable?
     private var lastReminderSignature: String?
     private var lastAutoSwitchSignature: String?
+    private var lastUsageDetailsRefreshDate: Date?
 
     init() {
         settingsCancellable = settings.objectWillChange.sink { [weak self] _ in
@@ -92,6 +94,7 @@ final class CodexHubModel: ObservableObject {
                 self.switchingAccountEmail = nil
                 self.isRefreshing = false
                 self.evaluateAutomation()
+                self.refreshUsageDetailsIfStale()
             }
         }
     }
@@ -140,7 +143,12 @@ final class CodexHubModel: ObservableObject {
     }
 
     func loadUsageDetails(force: Bool) {
-        if usageDetails != nil && !force { return }
+        if usageDetails != nil && !force {
+            if let lastUsageDetailsRefreshDate,
+               Date().timeIntervalSince(lastUsageDetailsRefreshDate) < minimumDetailsRefreshInterval {
+                return
+            }
+        }
         guard !isLoadingDetails else { return }
         isLoadingDetails = true
         let accounts = self.accounts
@@ -148,6 +156,7 @@ final class CodexHubModel: ObservableObject {
             let details = self.usageScanner.scanDetails(attribution: self.attributionStore, accounts: accounts)
             DispatchQueue.main.async {
                 self.usageDetails = details
+                self.lastUsageDetailsRefreshDate = Date()
                 self.isLoadingDetails = false
                 if let error = details.lastError {
                     self.lastError = error
@@ -182,8 +191,16 @@ final class CodexHubModel: ObservableObject {
     func resetAttributionHistory() {
         attributionStore.resetHistory(currentEmail: activeAccount?.email)
         usageDetails = nil
+        lastUsageDetailsRefreshDate = nil
         settings.statusMessage = L.attributionHistoryReset
         refresh(force: true)
+    }
+
+    private func refreshUsageDetailsIfStale() {
+        guard usageDetails != nil else { return }
+        guard let lastUsageDetailsRefreshDate,
+              Date().timeIntervalSince(lastUsageDetailsRefreshDate) >= minimumDetailsRefreshInterval else { return }
+        loadUsageDetails(force: true)
     }
 
     private func evaluateAutomation() {
