@@ -120,14 +120,14 @@ struct RefreshButton: View {
                         .font(.system(size: 12, weight: .semibold))
                         .frame(width: 14, height: 14)
                 }
-                Text("Refresh")
+                Text(L.refresh)
             }
-            .frame(width: 82)
+            .frame(width: AppLanguage.current == .korean ? 94 : 82)
         }
         .buttonStyle(HubButtonStyle(compact: true, hovering: hovering))
         .onHover { hovering = $0 }
         .disabled(isRefreshing)
-        .help(isRefreshing ? "Refreshing" : "Refresh")
+        .help(isRefreshing ? L.refreshing : L.refresh)
     }
 }
 

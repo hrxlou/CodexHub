@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 final class CodexAuthService {
@@ -16,10 +17,10 @@ final class CodexAuthService {
 
         var label: String {
             switch self {
-            case .on: return "On"
-            case .off: return "Off"
-            case .fallback: return "Fallback"
-            case .failed: return "Failed"
+            case .on: return L.text(ko: "켜짐", en: "On")
+            case .off: return L.text(ko: "꺼짐", en: "Off")
+            case .fallback: return L.text(ko: "대체 사용", en: "Fallback")
+            case .failed: return L.text(ko: "실패", en: "Failed")
             }
         }
 
@@ -32,7 +33,7 @@ final class CodexAuthService {
         let result = runCodexAuth(["list"], timeout: 8)
         guard result.status == 0 else {
             let message = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
-            return ([], message.isEmpty ? "codex-auth list failed" : message, .failed, false)
+            return ([], message.isEmpty ? L.text(ko: "codex-auth list 실패", en: "codex-auth list failed") : message, .failed, false)
         }
 
         let parsed = parseAccounts(result.output)
@@ -41,7 +42,7 @@ final class CodexAuthService {
         if fallback.usedAppServer {
             status = .fallback
         }
-        let error = parsed.isEmpty ? "No codex-auth accounts found" : fallback.notice
+        let error = parsed.isEmpty ? L.text(ko: "codex-auth 계정을 찾을 수 없습니다", en: "No codex-auth accounts found") : fallback.notice
         return (fallback.accounts, error, status, false)
     }
 
@@ -101,14 +102,16 @@ final class CodexAuthService {
             let updated = accounts.map { account in
                 account.isActive ? account.withUnavailableRateLimitsIfNeeded() : account
             }
-            return (updated, false, "Active account app-server quota unavailable")
+            return (updated, false, L.text(ko: "활성 계정의 app-server 할당량을 사용할 수 없습니다", en: "Active account app-server quota unavailable"))
         }
         let limits = lookup.limits
         let updated = accounts.map { account in
             account.isActive ? account.applyingAppServerRateLimits(limits) : account
         }
-        let source = lookup.fromCache ? "cached app-server fallback" : "app-server fallback"
-        return (updated, true, "Using \(source) for active account quota only")
+        let notice = lookup.fromCache
+            ? L.text(ko: "활성 계정 할당량에 캐시된 app-server 대체값을 사용 중입니다", en: "Using cached app-server fallback for active account quota only")
+            : L.text(ko: "활성 계정 할당량에 app-server 대체값을 사용 중입니다", en: "Using app-server fallback for active account quota only")
+        return (updated, true, notice)
     }
 
     private struct AppServerResponse: Decodable {
@@ -159,6 +162,7 @@ final class CodexAuthService {
 
         let lock = NSLock()
         let completed = DispatchSemaphore(value: 0)
+        let exited = DispatchSemaphore(value: 0)
         var buffer = Data()
         var resolvedLimits: AppServerRateLimits?
 
@@ -179,9 +183,16 @@ final class CodexAuthService {
             }
             lock.unlock()
         }
+        stderr.fileHandleForReading.readabilityHandler = { handle in
+            _ = handle.availableData
+        }
 
         do {
             try process.run()
+            DispatchQueue.global(qos: .utility).async {
+                process.waitUntilExit()
+                exited.signal()
+            }
             let payload = "\(request1)\n\(request2)\n"
             if let data = payload.data(using: .utf8) {
                 stdin.fileHandleForWriting.write(data)
@@ -190,6 +201,12 @@ final class CodexAuthService {
             let timedOut = completed.wait(timeout: .now() + 4) == .timedOut
             if process.isRunning {
                 process.terminate()
+                if exited.wait(timeout: .now() + 1) == .timedOut, process.isRunning {
+                    kill(process.processIdentifier, SIGKILL)
+                    _ = exited.wait(timeout: .now() + 1)
+                }
+            } else {
+                _ = exited.wait(timeout: .now())
             }
             stdout.fileHandleForReading.readabilityHandler = nil
             stderr.fileHandleForReading.readabilityHandler = nil
@@ -268,7 +285,7 @@ final class CodexAuthService {
 
     private func runCodexAuth(_ args: [String], timeout: TimeInterval) -> CommandResult {
         guard let path = codexAuthPath() else {
-            return CommandResult(status: 127, output: "codex-auth was not found")
+            return CommandResult(status: 127, output: L.text(ko: "codex-auth를 찾을 수 없습니다", en: "codex-auth was not found"))
         }
         return run(path, args, timeout: timeout)
     }
@@ -329,11 +346,20 @@ final class CodexAuthService {
     private func run(_ executable: String, _ args: [String], timeout: TimeInterval) -> CommandResult {
         let process = Process()
         let pipe = Pipe()
+        let lock = NSLock()
+        var output = Data()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = args
         process.standardOutput = pipe
         process.standardError = pipe
         process.environment = processEnvironment()
+        pipe.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            guard data.isEmpty == false else { return }
+            lock.lock()
+            output.append(data)
+            lock.unlock()
+        }
         do {
             try process.run()
             let semaphore = DispatchSemaphore(value: 0)
@@ -345,14 +371,27 @@ final class CodexAuthService {
                 if process.isRunning {
                     process.terminate()
                 }
-                _ = semaphore.wait(timeout: .now() + 1)
-                let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                return CommandResult(status: 124, output: "Command timed out: \(URL(fileURLWithPath: executable).lastPathComponent) \(args.joined(separator: " "))\n\(String(data: data, encoding: .utf8) ?? "")")
+                if semaphore.wait(timeout: .now() + 1) == .timedOut, process.isRunning {
+                    kill(process.processIdentifier, SIGKILL)
+                    _ = semaphore.wait(timeout: .now() + 1)
+                }
+                pipe.fileHandleForReading.readabilityHandler = nil
+                let text = drainedOutput(from: pipe, accumulated: output, lock: lock)
+                return CommandResult(status: 124, output: L.text(ko: "명령 시간이 초과되었습니다", en: "Command timed out") + ": \(URL(fileURLWithPath: executable).lastPathComponent) \(args.joined(separator: " "))\n\(text)")
             }
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            return CommandResult(status: process.terminationStatus, output: String(data: data, encoding: .utf8) ?? "")
+            pipe.fileHandleForReading.readabilityHandler = nil
+            return CommandResult(status: process.terminationStatus, output: drainedOutput(from: pipe, accumulated: output, lock: lock))
         } catch {
+            pipe.fileHandleForReading.readabilityHandler = nil
             return CommandResult(status: 127, output: error.localizedDescription)
         }
+    }
+
+    private func drainedOutput(from pipe: Pipe, accumulated: Data, lock: NSLock) -> String {
+        lock.lock()
+        var data = accumulated
+        lock.unlock()
+        data.append(pipe.fileHandleForReading.readDataToEndOfFile())
+        return String(data: data, encoding: .utf8) ?? ""
     }
 }

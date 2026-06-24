@@ -3,14 +3,38 @@ import ServiceManagement
 import SwiftUI
 import UserNotifications
 
+enum AppLanguage: String, CaseIterable, Identifiable {
+    case korean = "ko"
+    case english = "en"
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .korean: return "한국어"
+        case .english: return "English"
+        }
+    }
+
+    static var systemDefault: AppLanguage {
+        let preferred = Locale.preferredLanguages.first?.lowercased() ?? ""
+        return preferred.hasPrefix("ko") ? .korean : .english
+    }
+
+    static var current: AppLanguage {
+        AppLanguage(rawValue: UserDefaults.standard.string(forKey: HubSettings.Keys.language) ?? "") ?? systemDefault
+    }
+}
+
 final class HubSettings: ObservableObject {
-    private enum Keys {
+    enum Keys {
         static let launchAtLogin = "launchAtLogin"
         static let usageReminderEnabled = "usageReminderEnabled"
         static let reminderThreshold = "reminderThreshold"
         static let autoSwitchEnabled = "autoSwitchEnabled"
         static let autoSwitchThreshold = "autoSwitchThreshold"
         static let quotaAPIEnabled = "quotaAPIEnabled"
+        static let language = "language"
     }
 
     private let defaults = UserDefaults.standard
@@ -47,6 +71,10 @@ final class HubSettings: ObservableObject {
         didSet { defaults.set(quotaAPIEnabled, forKey: Keys.quotaAPIEnabled) }
     }
 
+    @Published var language: AppLanguage {
+        didSet { defaults.set(language.rawValue, forKey: Keys.language) }
+    }
+
     @Published var statusMessage: String?
 
     init() {
@@ -56,11 +84,12 @@ final class HubSettings: ObservableObject {
         autoSwitchEnabled = defaults.object(forKey: Keys.autoSwitchEnabled) as? Bool ?? false
         autoSwitchThreshold = defaults.object(forKey: Keys.autoSwitchThreshold) as? Int ?? 10
         quotaAPIEnabled = defaults.object(forKey: Keys.quotaAPIEnabled) as? Bool ?? true
+        language = AppLanguage(rawValue: defaults.string(forKey: Keys.language) ?? "") ?? AppLanguage.systemDefault
     }
 
     private func applyLaunchAtLogin() {
         guard #available(macOS 13.0, *) else {
-            statusMessage = "Launch at login requires macOS 13+"
+            statusMessage = L.launchAtLoginRequiresMacOS13
             return
         }
         do {
@@ -68,12 +97,12 @@ final class HubSettings: ObservableObject {
                 if SMAppService.mainApp.status != .enabled {
                     try SMAppService.mainApp.register()
                 }
-                statusMessage = "Launch at login enabled"
+                statusMessage = L.launchAtLoginEnabled
             } else {
                 if SMAppService.mainApp.status == .enabled {
                     try SMAppService.mainApp.unregister()
                 }
-                statusMessage = "Launch at login disabled"
+                statusMessage = L.launchAtLoginDisabled
             }
         } catch {
             statusMessage = error.localizedDescription
@@ -86,9 +115,9 @@ final class HubSettings: ObservableObject {
                 if let error {
                     self.statusMessage = error.localizedDescription
                 } else if granted {
-                    self.statusMessage = "Notifications enabled"
+                    self.statusMessage = L.notificationsEnabled
                 } else {
-                    self.statusMessage = "Notifications were not allowed"
+                    self.statusMessage = L.notificationsDenied
                 }
             }
         }

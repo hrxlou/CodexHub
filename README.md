@@ -29,7 +29,12 @@ open /Applications/CodexHub.app
 ## Structure
 
 - `Sources/main.swift`: SwiftUI app source
-- `Resources/`: icons and pricing data
+- `Resources/`: icons and CodexHub price book data
 - `Tools/GenerateIcon.swift`: icon generation helper
 - `build.sh`: standalone build script
 
+## Open Source Notes
+
+CodexHub keeps its token usage scanner and price book in a project-specific
+format. The app reads local Codex JSONL session logs and does not vendor
+third-party source files or assets.
