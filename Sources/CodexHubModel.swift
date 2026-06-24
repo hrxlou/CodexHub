@@ -18,6 +18,8 @@ final class CodexHubModel: ObservableObject {
     @Published var lastError: String?
     @Published var isRefreshing = false
     @Published var isLoadingDetails = false
+    @Published var usageDetailsProgress: Double?
+    @Published var usageDetailsProgressText: String?
     @Published var switchingAccountEmail: String?
     @Published var quotaAPIStatus: CodexAuthService.QuotaAPIStatus = .off
     @Published var lastRefreshDate: Date?
@@ -151,13 +153,22 @@ final class CodexHubModel: ObservableObject {
         }
         guard !isLoadingDetails else { return }
         isLoadingDetails = true
+        usageDetailsProgress = 0
+        usageDetailsProgressText = nil
         let accounts = self.accounts
         workQueue.async {
-            let details = self.usageScanner.scanDetails(attribution: self.attributionStore, accounts: accounts)
+            let details = self.usageScanner.scanDetails(attribution: self.attributionStore, accounts: accounts) { progress in
+                DispatchQueue.main.async {
+                    self.usageDetailsProgress = progress.fraction
+                    self.usageDetailsProgressText = L.usageScanProgress(completed: progress.completedFiles, total: progress.totalFiles)
+                }
+            }
             DispatchQueue.main.async {
                 self.usageDetails = details
                 self.lastUsageDetailsRefreshDate = Date()
                 self.isLoadingDetails = false
+                self.usageDetailsProgress = nil
+                self.usageDetailsProgressText = nil
                 if let error = details.lastError {
                     self.lastError = error
                 }

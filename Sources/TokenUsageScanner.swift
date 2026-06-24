@@ -83,6 +83,20 @@ private struct UsageScanFailure: Error {
     let message: String
 }
 
+struct UsageScanProgress {
+    let completedFiles: Int
+    let totalFiles: Int
+    let completedBytes: UInt64
+    let totalBytes: UInt64
+
+    var fraction: Double {
+        guard totalBytes > 0 else {
+            return totalFiles == 0 ? 1 : Double(completedFiles) / Double(totalFiles)
+        }
+        return min(1, max(0, Double(completedBytes) / Double(totalBytes)))
+    }
+}
+
 private enum RollupMode {
     case todayOnly
     case full
@@ -136,9 +150,13 @@ final class TokenUsageScanner {
         }
     }
 
-    func scanDetails(attribution: AttributionStore, accounts: [CodexAccount]) -> UsageDetailSnapshot {
+    func scanDetails(
+        attribution: AttributionStore,
+        accounts: [CodexAccount],
+        progress: ((UsageScanProgress) -> Void)? = nil
+    ) -> UsageDetailSnapshot {
         scanQueue.sync {
-            scanDetailsUnlocked(attribution: attribution, accounts: accounts)
+            scanDetailsUnlocked(attribution: attribution, accounts: accounts, progress: progress)
         }
     }
 
@@ -160,13 +178,17 @@ final class TokenUsageScanner {
         }
     }
 
-    private func scanDetailsUnlocked(attribution: AttributionStore, accounts: [CodexAccount]) -> UsageDetailSnapshot {
+    private func scanDetailsUnlocked(
+        attribution: AttributionStore,
+        accounts: [CodexAccount],
+        progress: ((UsageScanProgress) -> Void)?
+    ) -> UsageDetailSnapshot {
         let calendar = Calendar.current
         let now = Date()
         let todayStart = calendar.startOfDay(for: now)
         let weekStart = calendar.dateInterval(of: .weekOfYear, for: now)?.start ?? todayStart
         let monthStart = calendar.dateInterval(of: .month, for: now)?.start ?? weekStart
-        let result = scanSessions(from: min(weekStart, monthStart), attribution: attribution, accounts: accounts, rollupMode: .full)
+        let result = scanSessions(from: min(weekStart, monthStart), attribution: attribution, accounts: accounts, rollupMode: .full, progress: progress)
         switch result {
         case .failure(let failure):
             return UsageDetailSnapshot(today: .zero, week: .zero, month: .zero, weekByAccount: [:], monthByAccount: [:], recentDaily: [], scannedFiles: 0, lastError: failure.message)
@@ -188,7 +210,8 @@ final class TokenUsageScanner {
         from rangeStart: Date,
         attribution: AttributionStore,
         accounts: [CodexAccount],
-        rollupMode: RollupMode
+        rollupMode: RollupMode,
+        progress: ((UsageScanProgress) -> Void)? = nil
     ) -> Result<UsageRollup, UsageScanFailure> {
         let root = fileManager.homeDirectoryForCurrentUser
             .appendingPathComponent(".codex", isDirectory: true)
@@ -208,15 +231,27 @@ final class TokenUsageScanner {
         let loaded = loadLedger()
         var ledger = loaded.ledger
         var ledgerChanged = false
+        var completedBytes: UInt64 = 0
+        let metadataList = files.compactMap { metadata(for: $0) }
+        let estimatedBytes = metadataList.map { estimatedBytesToRead(metadata: $0, existing: ledger.files[$0.path]) }
+        let totalBytes = estimatedBytes.reduce(UInt64(0), +)
+        progress?(UsageScanProgress(completedFiles: 0, totalFiles: metadataList.count, completedBytes: 0, totalBytes: totalBytes))
 
-        for url in files {
-            guard let metadata = metadata(for: url) else { continue }
+        for (index, metadata) in metadataList.enumerated() {
+            let url = URL(fileURLWithPath: metadata.path)
             let existing = ledger.files[metadata.path]
             let record = updateRecord(for: url, metadata: metadata, existing: ledger.files[metadata.path], calendar: calendar)
             if existing != record {
                 ledger.files[metadata.path] = record
                 ledgerChanged = true
             }
+            completedBytes += estimatedBytes[index]
+            progress?(UsageScanProgress(
+                completedFiles: index + 1,
+                totalFiles: metadataList.count,
+                completedBytes: completedBytes,
+                totalBytes: totalBytes
+            ))
         }
 
         if pruneExpiredRecords(&ledger, retentionStart: retentionStart) {
@@ -235,8 +270,15 @@ final class TokenUsageScanner {
             todayStart: todayStart,
             attribution: attribution
         )
+        let rollupRecords: [SessionFileRecord]
+        switch rollupMode {
+        case .todayOnly:
+            rollupRecords = files.compactMap { ledger.files[$0.path] }
+        case .full:
+            rollupRecords = Array(ledger.files.values)
+        }
         let rollup = makeRollup(
-            records: ledger.files.values,
+            records: rollupRecords,
             todayStart: todayStart,
             weekStart: weekStart,
             monthStart: monthStart,
@@ -250,8 +292,10 @@ final class TokenUsageScanner {
     private func updateRecord(for url: URL, metadata: FileMetadata, existing: SessionFileRecord?, calendar: Calendar) -> SessionFileRecord {
         if let existing,
            existing.byteCount == metadata.byteCount,
-           existing.modifiedAt == metadata.modifiedAt {
-            return existing
+           existing.parsedOffset == metadata.byteCount {
+            var next = existing
+            next.modifiedAt = metadata.modifiedAt
+            return next
         }
 
         let canAppend = canAppendSafely(to: url, metadata: metadata, existing: existing)
@@ -280,7 +324,6 @@ final class TokenUsageScanner {
     private func canAppendSafely(to url: URL, metadata: FileMetadata, existing: SessionFileRecord?) -> Bool {
         guard let existing,
               existing.parsedOffset > 0,
-              existing.byteCount == existing.parsedOffset,
               metadata.byteCount > existing.parsedOffset,
               metadata.byteCount >= existing.byteCount,
               let fingerprint = existing.appendFingerprint else {
@@ -288,9 +331,23 @@ final class TokenUsageScanner {
         }
 
         // JSONL session files are expected to grow append-only. Before parsing only
-        // the new bytes, verify the previously parsed prefix still matches the
-        // ledger; legacy records without this fingerprint are fully reparsed once.
+        // the new bytes, verify the parsed prefix still matches the ledger.
+        // If the previous scan stopped before an in-progress trailing line, reading
+        // from parsedOffset lets the now-complete line be processed without reparsing
+        // the whole active session file.
         return appendFingerprint(for: url, upTo: existing.parsedOffset) == fingerprint
+    }
+
+    private func estimatedBytesToRead(metadata: FileMetadata, existing: SessionFileRecord?) -> UInt64 {
+        guard let existing else { return metadata.byteCount }
+        if existing.byteCount == metadata.byteCount,
+           existing.parsedOffset == metadata.byteCount {
+            return 0
+        }
+        if canAppendSafely(to: URL(fileURLWithPath: metadata.path), metadata: metadata, existing: existing) {
+            return metadata.byteCount - existing.parsedOffset
+        }
+        return metadata.byteCount
     }
 
     private func streamFile(_ url: URL, from offset: UInt64, calendar: Calendar, state: inout RunningParseState) -> UInt64? {

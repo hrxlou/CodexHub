@@ -88,6 +88,13 @@ enum L {
         text(ko: "\(count)개 \(ledgerRecords)", en: "\(count) \(ledgerRecords)")
     }
 
+    static func usageScanProgress(completed: Int, total: Int) -> String {
+        guard total > 0 else {
+            return text(ko: "사용 기록 확인 중", en: "Checking usage records")
+        }
+        return text(ko: "\(completed)/\(total)개 파일 확인 중", en: "Scanning \(completed)/\(total) files")
+    }
+
     static func autoSwitchMessage(activeLabel: String, activeRemaining: Int, candidateLabel: String, candidateRemaining: Int) -> String {
         text(
             ko: "\(activeLabel)은 5H 잔여량이 \(activeRemaining)%입니다. \(candidateLabel)은 \(candidateRemaining)% 남았습니다.",
