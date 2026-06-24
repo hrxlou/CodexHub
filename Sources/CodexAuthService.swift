@@ -30,7 +30,7 @@ final class CodexAuthService {
     }
 
     func listAccounts(useAPI: Bool) -> (accounts: [CodexAccount], error: String?, quotaAPIStatus: QuotaAPIStatus, autoDisabledAPI: Bool) {
-        let result = runCodexAuth(["list"], timeout: 8)
+        let result = runCodexAuthList(useAPI: useAPI)
         guard result.status == 0 else {
             let message = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
             return ([], message.isEmpty ? L.text(ko: "codex-auth 목록을 불러오지 못했습니다", en: "codex-auth list failed") : message, .failed, false)
@@ -158,7 +158,7 @@ final class CodexAuthService {
         process.standardInput = stdin
         process.standardOutput = stdout
         process.standardError = stderr
-        process.environment = processEnvironment()
+        process.environment = processEnvironment(prependingExecutableDirectory: codexPath)
 
         let lock = NSLock()
         let completed = DispatchSemaphore(value: 0)
@@ -290,6 +290,27 @@ final class CodexAuthService {
         return run(path, args, timeout: timeout)
     }
 
+    private func runCodexAuthList(useAPI: Bool) -> CommandResult {
+        let explicitArgs = useAPI ? ["list", "--api"] : ["list", "--skip-api"]
+        let explicit = runCodexAuth(explicitArgs, timeout: 8)
+        if explicit.status == 0 || !looksLikeUnsupportedOption(explicit.output) {
+            return explicit
+        }
+
+        let configured = setQuotaAPIEnabled(useAPI)
+        guard configured.status == 0 else { return configured }
+        return runCodexAuth(["list"], timeout: 8)
+    }
+
+    private func looksLikeUnsupportedOption(_ output: String) -> Bool {
+        let lowercased = output.lowercased()
+        return lowercased.contains("unknown option")
+            || lowercased.contains("unknown argument")
+            || lowercased.contains("unrecognized option")
+            || lowercased.contains("unexpected argument")
+            || lowercased.contains("usage:")
+    }
+
     private func codexAuthPath() -> String? {
         let home = NSHomeDirectory()
         let nvmNodeDir = URL(fileURLWithPath: "\(home)/.nvm/versions/node")
@@ -329,13 +350,26 @@ final class CodexAuthService {
         return result.status == 0 && FileManager.default.isExecutableFile(atPath: path) ? path : nil
     }
 
-    private func processEnvironment() -> [String: String] {
+    private func processEnvironment(prependingExecutableDirectory executable: String? = nil) -> [String: String] {
         var environment = ProcessInfo.processInfo.environment
-        environment["PATH"] = "\(NSHomeDirectory())/.nvm/versions/node/v20.20.2/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
-        let bundledNode = "/Applications/Codex.app/Contents/Resources/node"
-        if FileManager.default.isExecutableFile(atPath: bundledNode) {
-            environment["CODEX_AUTH_NODE_EXECUTABLE"] = bundledNode
+        let currentPath = environment["PATH"] ?? ""
+        var pathEntries: [String] = []
+        if let executable {
+            pathEntries.append(URL(fileURLWithPath: executable).deletingLastPathComponent().path)
         }
+        pathEntries.append(contentsOf: [
+            "\(NSHomeDirectory())/.local/bin",
+            "/opt/homebrew/bin",
+            "/usr/local/bin",
+            "/usr/bin",
+            "/bin",
+            "/usr/sbin",
+            "/sbin"
+        ])
+        if !currentPath.isEmpty {
+            pathEntries.append(currentPath)
+        }
+        environment["PATH"] = pathEntries.joined(separator: ":")
         let bundledCodex = "/Applications/Codex.app/Contents/Resources/codex"
         if FileManager.default.isExecutableFile(atPath: bundledCodex) {
             environment["CODEX_CLI_PATH"] = bundledCodex
@@ -352,7 +386,7 @@ final class CodexAuthService {
         process.arguments = args
         process.standardOutput = pipe
         process.standardError = pipe
-        process.environment = processEnvironment()
+        process.environment = processEnvironment(prependingExecutableDirectory: executable)
         pipe.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
             guard data.isEmpty == false else { return }

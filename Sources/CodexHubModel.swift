@@ -177,26 +177,11 @@ final class CodexHubModel: ObservableObject {
     }
 
     func setQuotaAPIEnabled(_ enabled: Bool) {
-        guard settings.quotaAPIEnabled != enabled || quotaAPIStatus == .failed else { return }
-        isRefreshing = true
-        workQueue.async {
-            let result = self.authService.setQuotaAPIEnabled(enabled)
-            DispatchQueue.main.async {
-                if result.status != 0 {
-                    self.quotaAPIStatus = .failed
-                    let message = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
-                    self.settings.statusMessage = message.isEmpty ? L.quotaAPIUpdateFailed : message
-                    self.isRefreshing = false
-                    self.refresh(force: true)
-                } else {
-                    self.settings.quotaAPIEnabled = enabled
-                    self.quotaAPIStatus = enabled ? .on : .off
-                    self.settings.statusMessage = enabled ? L.quotaAPIEnabled : L.quotaAPIDisabled
-                    self.isRefreshing = false
-                    self.refresh(force: true)
-                }
-            }
-        }
+        guard settings.quotaAPIEnabled != enabled else { return }
+        settings.quotaAPIEnabled = enabled
+        quotaAPIStatus = enabled ? .on : .off
+        settings.statusMessage = enabled ? L.quotaAPIEnabled : L.quotaAPIDisabled
+        refresh(force: true)
     }
 
     func resetAttributionHistory() {
