@@ -130,7 +130,7 @@ struct AccountCardView: View {
 
     var body: some View {
         Button {
-            guard !account.isActive, !model.isRefreshing, !model.isSwitchingAccount else { return }
+            guard !account.isActive, !model.isSwitchingAccount else { return }
             model.switchAccount(account.email)
         } label: {
             VStack(alignment: .leading, spacing: 8) {
@@ -168,7 +168,7 @@ struct AccountCardView: View {
             )
         }
         .buttonStyle(.plain)
-        .allowsHitTesting(!account.isActive && !model.isRefreshing && !model.isSwitchingAccount)
+        .allowsHitTesting(!account.isActive && !model.isSwitchingAccount)
         .onHover { hovering = $0 }
         .help(account.isActive ? "Active account" : "Switch to \(account.email)")
     }
