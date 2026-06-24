@@ -107,6 +107,12 @@ final class TokenUsageScanner {
     private let pricingCatalog = ModelPricingCatalog.load()
     private let decoder = JSONDecoder()
     private let fileManager = FileManager.default
+    private let scanQueue = DispatchQueue(label: "local.codexhub.token-usage-scanner")
+    private let ledgerEncoder: JSONEncoder = {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        return encoder
+    }()
     private let cacheURL: URL = {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
             .appendingPathComponent("CodexHub", isDirectory: true)
@@ -120,6 +126,18 @@ final class TokenUsageScanner {
     }()
 
     func scan(attribution: AttributionStore, accounts: [CodexAccount]) -> UsageSnapshot {
+        scanQueue.sync {
+            scanUnlocked(attribution: attribution, accounts: accounts)
+        }
+    }
+
+    func scanDetails(attribution: AttributionStore, accounts: [CodexAccount]) -> UsageDetailSnapshot {
+        scanQueue.sync {
+            scanDetailsUnlocked(attribution: attribution, accounts: accounts)
+        }
+    }
+
+    private func scanUnlocked(attribution: AttributionStore, accounts: [CodexAccount]) -> UsageSnapshot {
         let calendar = Calendar.current
         let rangeStart = calendar.startOfDay(for: Date())
         let result = scanSessions(from: rangeStart, attribution: attribution, accounts: accounts)
@@ -137,7 +155,7 @@ final class TokenUsageScanner {
         }
     }
 
-    func scanDetails(attribution: AttributionStore, accounts: [CodexAccount]) -> UsageDetailSnapshot {
+    private func scanDetailsUnlocked(attribution: AttributionStore, accounts: [CodexAccount]) -> UsageDetailSnapshot {
         let calendar = Calendar.current
         let now = Date()
         let todayStart = calendar.startOfDay(for: now)
@@ -154,7 +172,7 @@ final class TokenUsageScanner {
                 month: rollup.month,
                 weekByAccount: rollup.weekByAccount,
                 monthByAccount: rollup.monthByAccount,
-                recentDaily: Array(rollup.recentDaily.prefix(7)),
+                recentDaily: recentCalendarDays(from: rollup.recentDaily, endingAt: todayStart, count: 3, calendar: calendar),
                 scannedFiles: rollup.scannedFiles,
                 lastError: nil
             )
@@ -366,17 +384,20 @@ final class TokenUsageScanner {
         var monthByAccount: [String: UsageAggregate] = [:]
         var daily: [Date: UsageAggregate] = [:]
         var recordCount = 0
+        let dailyStart = min(weekStart, monthStart)
 
         for record in records {
             recordCount += 1
             for entry in record.usageEvents {
-                guard entry.timestamp >= monthStart else { continue }
+                guard entry.timestamp >= dailyStart else { continue }
                 let date = calendar.startOfDay(for: entry.timestamp)
                 let aggregate = entry.aggregate
                 let email = attribution.email(for: entry.timestamp)
                 daily[date] = (daily[date] ?? .zero).adding(aggregate)
-                month = month.adding(aggregate)
-                monthByAccount[email] = (monthByAccount[email] ?? .zero).adding(aggregate)
+                if entry.timestamp >= monthStart {
+                    month = month.adding(aggregate)
+                    monthByAccount[email] = (monthByAccount[email] ?? .zero).adding(aggregate)
+                }
                 if date >= weekStart {
                     week = week.adding(aggregate)
                     weekByAccount[email] = (weekByAccount[email] ?? .zero).adding(aggregate)
@@ -403,6 +424,19 @@ final class TokenUsageScanner {
     private func makeAggregate(totals: TokenTotals, model: String?) -> UsageAggregate {
         let rates = pricingCatalog.rates(for: model)
         return UsageAggregate(totals: totals, costs: CostTotals(totals: totals, rates: rates))
+    }
+
+    private func recentCalendarDays(
+        from rows: [(Date, UsageAggregate)],
+        endingAt todayStart: Date,
+        count: Int,
+        calendar: Calendar
+    ) -> [(Date, UsageAggregate)] {
+        let lookup = Dictionary(uniqueKeysWithValues: rows.map { (calendar.startOfDay(for: $0.0), $0.1) })
+        return (0..<count).compactMap { offset in
+            guard let date = calendar.date(byAdding: .day, value: -offset, to: todayStart) else { return nil }
+            return (date, lookup[date] ?? .zero)
+        }
     }
 
     private func jsonlFiles(in root: URL, from start: Date, through end: Date, calendar: Calendar) -> [URL] {
@@ -479,19 +513,8 @@ final class TokenUsageScanner {
     }
 
     private func saveLedger(_ ledger: UsageLedger) {
-        guard let data = try? JSONEncoder.codexHub.encode(ledger) else { return }
+        guard let data = try? ledgerEncoder.encode(ledger) else { return }
         try? data.write(to: cacheURL, options: .atomic)
-    }
-
-    private func dayKey(for date: Date, calendar: Calendar) -> String {
-        let components = calendar.dateComponents([.year, .month, .day], from: date)
-        return String(format: "%04d-%02d-%02d", components.year ?? 0, components.month ?? 0, components.day ?? 0)
-    }
-
-    private func dateFromDayKey(_ key: String, calendar: Calendar) -> Date? {
-        let pieces = key.split(separator: "-").compactMap { Int($0) }
-        guard pieces.count == 3 else { return nil }
-        return calendar.date(from: DateComponents(year: pieces[0], month: pieces[1], day: pieces[2]))
     }
 
     private func historicalAccountEmail(from accounts: [CodexAccount]) -> String? {

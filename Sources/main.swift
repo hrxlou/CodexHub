@@ -8,7 +8,7 @@ struct CodexHubApp: App {
         MenuBarExtra {
             CodexHubMenu(model: model)
                 .onAppear {
-                    model.refresh(force: true)
+                    model.refresh(force: false)
                 }
         } label: {
             Text(model.menuBarTitle)

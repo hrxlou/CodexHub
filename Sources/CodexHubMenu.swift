@@ -5,6 +5,7 @@ import SwiftUI
 struct CodexHubMenu: View {
     @ObservedObject var model: CodexHubModel
     @ObservedObject var settings: HubSettings
+    @Environment(\.colorScheme) private var colorScheme
     @State private var panel: HubPanel = .usage
     @State private var tokenCostHover = false
 
@@ -54,7 +55,7 @@ struct CodexHubMenu: View {
 
     private var header: some View {
         HStack(alignment: .center, spacing: 12) {
-            Image(nsImage: HubImages.appIcon)
+            Image(nsImage: HubImages.appIcon(for: colorScheme))
                 .resizable()
                 .frame(width: 38, height: 38)
                 .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
@@ -246,10 +247,6 @@ struct CodexHubMenu: View {
                     } else {
                         ForEach(Array(details.recentDaily.prefix(3).enumerated()), id: \.offset) { _, row in
                             compactUsageRow(label: Format.day(row.0), value: Format.summary(row.1))
-                        }
-                        if details.recentDaily.count > 3 {
-                            compactUsageRow(label: L.more(details.recentDaily.count - 3), value: "")
-                                .foregroundStyle(.secondary)
                         }
                     }
                 }

@@ -4,102 +4,94 @@ import Foundation
 let root = URL(fileURLWithPath: CommandLine.arguments.dropFirst().first ?? FileManager.default.currentDirectoryPath)
 let resources = root.appendingPathComponent("Resources", isDirectory: true)
 let iconset = resources.appendingPathComponent("CodexHub.iconset", isDirectory: true)
-try? FileManager.default.createDirectory(at: resources, withIntermediateDirectories: true)
+let sourceURL = resources.appendingPathComponent("CodexHubIconSource.png")
+
+try FileManager.default.createDirectory(at: resources, withIntermediateDirectories: true)
 try? FileManager.default.removeItem(at: iconset)
 try FileManager.default.createDirectory(at: iconset, withIntermediateDirectories: true)
 
-func makeImage(size: CGFloat, menuBar: Bool = false) -> NSImage {
-    let image = NSImage(size: NSSize(width: size, height: size))
-    image.lockFocus()
-    defer { image.unlockFocus() }
-
-    NSColor.clear.setFill()
-    NSRect(x: 0, y: 0, width: size, height: size).fill()
-
-    if menuBar {
-        NSColor.black.setFill()
-        let font = NSFont.monospacedSystemFont(ofSize: size * 0.68, weight: .semibold)
-        let text = NSAttributedString(string: "C", attributes: [.font: font, .foregroundColor: NSColor.black])
-        let textSize = text.size()
-        text.draw(at: NSPoint(x: (size - textSize.width) / 2, y: (size - textSize.height) / 2))
-        return image
-    }
-
-    let outer = NSRect(x: size * 0.07, y: size * 0.07, width: size * 0.86, height: size * 0.86)
-    let radius = size * 0.22
-    let outerPath = NSBezierPath(roundedRect: outer, xRadius: radius, yRadius: radius)
-
-    let shadow = NSShadow()
-    shadow.shadowColor = NSColor.black.withAlphaComponent(0.24)
-    shadow.shadowBlurRadius = size * 0.055
-    shadow.shadowOffset = NSSize(width: 0, height: -size * 0.025)
-    NSGraphicsContext.saveGraphicsState()
-    shadow.set()
-    NSColor.black.withAlphaComponent(0.16).setFill()
-    outerPath.fill()
-    NSGraphicsContext.restoreGraphicsState()
-
-    NSGraphicsContext.saveGraphicsState()
-    outerPath.addClip()
-
-    let background = NSGradient(colors: [
-        NSColor(red: 0.07, green: 0.09, blue: 0.12, alpha: 1),
-        NSColor(red: 0.09, green: 0.13, blue: 0.18, alpha: 1),
-        NSColor(red: 0.03, green: 0.18, blue: 0.20, alpha: 1)
-    ])
-    background?.draw(in: outer, angle: -36)
-
-    let glow = NSGradient(colors: [
-        NSColor(red: 0.23, green: 0.86, blue: 0.43, alpha: 0.78),
-        NSColor(red: 0.12, green: 0.52, blue: 0.95, alpha: 0.72)
-    ])
-    glow?.draw(in: NSRect(x: size * 0.12, y: size * 0.11, width: size * 0.76, height: size * 0.30), angle: 0)
-
-    NSColor.white.withAlphaComponent(0.07).setFill()
-    NSBezierPath(ovalIn: NSRect(x: size * 0.02, y: size * 0.55, width: size * 0.86, height: size * 0.50)).fill()
-
-    let backCard = NSRect(x: size * 0.48, y: size * 0.34, width: size * 0.25, height: size * 0.36)
-    NSColor(red: 0.16, green: 0.20, blue: 0.27, alpha: 0.95).setFill()
-    NSBezierPath(roundedRect: backCard, xRadius: size * 0.055, yRadius: size * 0.055).fill()
-
-    let frontCard = NSRect(x: size * 0.27, y: size * 0.28, width: size * 0.31, height: size * 0.44)
-    let cardGradient = NSGradient(colors: [
-        NSColor(red: 0.20, green: 0.82, blue: 0.38, alpha: 1),
-        NSColor(red: 0.09, green: 0.59, blue: 0.85, alpha: 1)
-    ])
-    cardGradient?.draw(in: NSBezierPath(roundedRect: frontCard, xRadius: size * 0.07, yRadius: size * 0.07), angle: -28)
-
-    let font = NSFont.monospacedSystemFont(ofSize: size * 0.29, weight: .heavy)
-    let c = NSAttributedString(string: "C", attributes: [.font: font, .foregroundColor: NSColor.white])
-    let cSize = c.size()
-    c.draw(at: NSPoint(x: frontCard.midX - cSize.width / 2, y: frontCard.midY - cSize.height / 2 - size * 0.01))
-
-    NSColor.white.withAlphaComponent(0.92).setFill()
-    let barWidth = size * 0.045
-    let gap = size * 0.025
-    let baseX = size * 0.63
-    let baseY = size * 0.30
-    let heights = [size * 0.16, size * 0.25, size * 0.35]
-    for index in 0..<3 {
-        let rect = NSRect(x: baseX + CGFloat(index) * (barWidth + gap), y: baseY, width: barWidth, height: heights[index])
-        NSBezierPath(roundedRect: rect, xRadius: barWidth * 0.48, yRadius: barWidth * 0.48).fill()
-    }
-
-    NSGraphicsContext.restoreGraphicsState()
-
-    NSColor.white.withAlphaComponent(0.16).setStroke()
-    outerPath.lineWidth = max(1, size * 0.012)
-    outerPath.stroke()
-    return image
+guard let sourceImage = NSImage(contentsOf: sourceURL) else {
+    throw NSError(domain: "CodexHubIcon", code: 1, userInfo: [NSLocalizedDescriptionKey: "Missing Resources/CodexHubIconSource.png"])
 }
 
-func writePNG(_ image: NSImage, to url: URL) throws {
+func resized(_ image: NSImage, size: CGFloat) -> NSImage {
+    let pixelSize = Int(size)
+    guard let bitmap = NSBitmapImageRep(
+        bitmapDataPlanes: nil,
+        pixelsWide: pixelSize,
+        pixelsHigh: pixelSize,
+        bitsPerSample: 8,
+        samplesPerPixel: 4,
+        hasAlpha: true,
+        isPlanar: false,
+        colorSpaceName: .deviceRGB,
+        bytesPerRow: 0,
+        bitsPerPixel: 0
+    ) else {
+        return image
+    }
+    bitmap.size = NSSize(width: size, height: size)
+
+    NSGraphicsContext.saveGraphicsState()
+    NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: bitmap)
+    NSGraphicsContext.current?.imageInterpolation = .high
+    image.draw(in: NSRect(x: 0, y: 0, width: size, height: size), from: .zero, operation: .copy, fraction: 1)
+    NSGraphicsContext.restoreGraphicsState()
+
+    let output = NSImage(size: NSSize(width: size, height: size))
+    output.addRepresentation(bitmap)
+    return output
+}
+
+func pngData(from image: NSImage) throws -> Data {
     guard let tiff = image.tiffRepresentation,
           let bitmap = NSBitmapImageRep(data: tiff),
           let data = bitmap.representation(using: .png, properties: [:]) else {
-        throw NSError(domain: "CodexHubIcon", code: 1)
+        throw NSError(domain: "CodexHubIcon", code: 2)
     }
-    try data.write(to: url)
+    return data
+}
+
+func writePNG(_ image: NSImage, to url: URL) throws {
+    try pngData(from: image).write(to: url)
+}
+
+func inverted(_ image: NSImage) throws -> NSImage {
+    guard let tiff = image.tiffRepresentation,
+          let bitmap = NSBitmapImageRep(data: tiff),
+          let cgImage = bitmap.cgImage else {
+        throw NSError(domain: "CodexHubIcon", code: 3)
+    }
+
+    let width = cgImage.width
+    let height = cgImage.height
+    let bytesPerPixel = 4
+    let bytesPerRow = width * bytesPerPixel
+    var pixels = [UInt8](repeating: 0, count: height * bytesPerRow)
+
+    guard let context = CGContext(
+        data: &pixels,
+        width: width,
+        height: height,
+        bitsPerComponent: 8,
+        bytesPerRow: bytesPerRow,
+        space: CGColorSpaceCreateDeviceRGB(),
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+    ) else {
+        throw NSError(domain: "CodexHubIcon", code: 4)
+    }
+
+    context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+    for index in stride(from: 0, to: pixels.count, by: bytesPerPixel) {
+        pixels[index] = 255 - pixels[index]
+        pixels[index + 1] = 255 - pixels[index + 1]
+        pixels[index + 2] = 255 - pixels[index + 2]
+    }
+
+    guard let invertedCG = context.makeImage() else {
+        throw NSError(domain: "CodexHubIcon", code: 5)
+    }
+    return NSImage(cgImage: invertedCG, size: image.size)
 }
 
 let iconSizes: [(String, CGFloat)] = [
@@ -116,11 +108,17 @@ let iconSizes: [(String, CGFloat)] = [
 ]
 
 for (name, size) in iconSizes {
-    try writePNG(makeImage(size: size), to: iconset.appendingPathComponent(name))
+    try writePNG(resized(sourceImage, size: size), to: iconset.appendingPathComponent(name))
 }
 
-try writePNG(makeImage(size: 128), to: resources.appendingPathComponent("CodexHubIcon.png"))
-try writePNG(makeImage(size: 18, menuBar: true), to: resources.appendingPathComponent("CodexHubMenuIcon.png"))
+let lightIcon = resized(sourceImage, size: 256)
+let darkIcon = try inverted(lightIcon)
+try writePNG(lightIcon, to: resources.appendingPathComponent("CodexHubIcon.png"))
+try writePNG(lightIcon, to: resources.appendingPathComponent("CodexHubIconLight.png"))
+try writePNG(darkIcon, to: resources.appendingPathComponent("CodexHubIconDark.png"))
+
+let menuIcon = resized(sourceImage, size: 36)
+try writePNG(menuIcon, to: resources.appendingPathComponent("CodexHubMenuIcon.png"))
 
 let process = Process()
 process.executableURL = URL(fileURLWithPath: "/usr/bin/iconutil")

@@ -29,8 +29,8 @@ enum L {
     static var preferences: String { text(ko: "환경설정", en: "Preferences") }
     static var language: String { text(ko: "표시 언어", en: "Language") }
     static var languageSubtitle: String { text(ko: "앱 UI에 사용할 언어", en: "Language used in the app UI") }
-    static var quotaAPI: String { text(ko: "Quota API", en: "Quota API") }
-    static var quotaAPISubtitle: String { text(ko: "가능하면 API 할당량 데이터를 사용", en: "Use API quota data when available") }
+    static var quotaAPI: String { text(ko: "로컬 상태 표시", en: "Local status fallback") }
+    static var quotaAPISubtitle: String { text(ko: "가능하면 로컬 상태 정보를 표시", en: "Use local status reading when available") }
     static var launchAtLogin: String { text(ko: "로그인 시 실행", en: "Launch at login") }
     static var launchAtLoginSubtitle: String { text(ko: "로그인 후 CodexHub 자동 열기", en: "Open CodexHub automatically after sign-in") }
     static var automation: String { text(ko: "자동화", en: "Automation") }
@@ -39,12 +39,12 @@ enum L {
     static var reminderThreshold: String { text(ko: "알림 기준", en: "Reminder threshold") }
     static var remaining: String { text(ko: "남았을 때", en: "remaining") }
     static var accountSuggestion: String { text(ko: "계정 제안", en: "Account suggestion") }
-    static var accountSuggestionSubtitle: String { text(ko: "한도 전에 여유 계정 전환 제안", en: "Offer a better account before limits") }
+    static var accountSuggestionSubtitle: String { text(ko: "잔여량이 낮을 때 전환 제안", en: "Suggest another account when remaining usage is low") }
     static var suggestionThreshold: String { text(ko: "제안 기준", en: "Suggestion threshold") }
     static var privacy: String { text(ko: "개인정보", en: "Privacy") }
-    static var attributionHistory: String { text(ko: "사용량-계정 매핑 기록", en: "Attribution history") }
-    static var attributionHistorySubtitle: String { text(ko: "저장된 사용량-계정 연결 기록만 지웁니다", en: "Clears saved usage-to-account mapping only") }
-    static var clearMap: String { text(ko: "매핑 삭제", en: "Clear Map") }
+    static var attributionHistory: String { text(ko: "계정 연결 기록", en: "Attribution history") }
+    static var attributionHistorySubtitle: String { text(ko: "사용량을 계정에 연결한 기록만 삭제합니다", en: "Clears saved usage-to-account mapping only") }
+    static var clearMap: String { text(ko: "기록 삭제", en: "Clear Map") }
     static var status: String { text(ko: "상태", en: "Status") }
     static var auth: String { text(ko: "인증", en: "Auth") }
     static var codex: String { text(ko: "Codex", en: "Codex") }
@@ -63,10 +63,10 @@ enum L {
     static var openTokenCostDetails: String { text(ko: "토큰 비용 상세 열기", en: "Open token cost details") }
     static var ledgerRecords: String { text(ko: "ledger 레코드", en: "ledger records") }
 
-    static var quotaAPIUpdateFailed: String { text(ko: "Quota API 업데이트 실패", en: "Quota API update failed") }
-    static var quotaAPIEnabled: String { text(ko: "Quota API가 켜졌습니다", en: "Quota API enabled") }
-    static var quotaAPIDisabled: String { text(ko: "Quota API가 꺼졌습니다", en: "Quota API disabled") }
-    static var attributionHistoryReset: String { text(ko: "사용량-계정 매핑 기록을 삭제했습니다", en: "Attribution history reset") }
+    static var quotaAPIUpdateFailed: String { text(ko: "로컬 상태 표시 업데이트 실패", en: "Local status fallback update failed") }
+    static var quotaAPIEnabled: String { text(ko: "로컬 상태 표시가 켜졌습니다", en: "Local status fallback enabled") }
+    static var quotaAPIDisabled: String { text(ko: "로컬 상태 표시가 꺼졌습니다", en: "Local status fallback disabled") }
+    static var attributionHistoryReset: String { text(ko: "계정 연결 기록을 삭제했습니다", en: "Attribution history reset") }
     static var switchCodexAccount: String { text(ko: "Codex 계정을 전환할까요?", en: "Switch Codex account?") }
     static var notNow: String { text(ko: "나중에", en: "Not Now") }
     static var usageReminderTitle: String { text(ko: "CodexHub 사용량 알림", en: "CodexHub usage reminder") }
@@ -97,8 +97,8 @@ enum L {
 
     static func usageReminderBody(accountLabel: String, used: Int, remaining: Int) -> String {
         text(
-            ko: "\(accountLabel) 계정이 5H 한도의 \(used)%를 사용했습니다. \(remaining)% 남았습니다.",
-            en: "\(accountLabel) account has used \(used)% of the 5H limit. \(remaining)% remains."
+            ko: "\(accountLabel) 계정의 5H 사용량은 \(used)%입니다. \(remaining)% 남았습니다.",
+            en: "\(accountLabel) account is at \(used)% 5H usage. \(remaining)% remains."
         )
     }
 }

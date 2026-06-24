@@ -2,6 +2,7 @@ import Foundation
 
 final class AttributionStore {
     private let fileURL: URL
+    private let lock = NSLock()
     private(set) var events: [AttributionEvent] = []
 
     init() {
@@ -13,12 +14,16 @@ final class AttributionStore {
     }
 
     func seedLegacyAccountIfNeeded(_ email: String?) {
+        lock.lock()
+        defer { lock.unlock() }
         guard events.isEmpty, let email, email.isEmpty == false else { return }
         events = [AttributionEvent(timestamp: Date(timeIntervalSince1970: 946_684_800), email: email)]
         save()
     }
 
     func recordActiveAccount(_ email: String) {
+        lock.lock()
+        defer { lock.unlock() }
         guard events.last?.email != email else { return }
         events.append(AttributionEvent(timestamp: Date(), email: email))
         events.sort { $0.timestamp < $1.timestamp }
@@ -26,6 +31,8 @@ final class AttributionStore {
     }
 
     func resetHistory(currentEmail: String?) {
+        lock.lock()
+        defer { lock.unlock() }
         if let currentEmail, currentEmail.isEmpty == false {
             events = [AttributionEvent(timestamp: Date(), email: currentEmail)]
             save()
@@ -36,6 +43,8 @@ final class AttributionStore {
     }
 
     func accountEmail(at date: Date) -> String {
+        lock.lock()
+        defer { lock.unlock() }
         var current = "Unknown"
         for event in events where event.timestamp <= date {
             current = event.email

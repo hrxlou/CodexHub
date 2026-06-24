@@ -8,6 +8,8 @@ final class CodexHubModel: ObservableObject {
     private let authService = CodexAuthService()
     private let usageScanner = TokenUsageScanner()
     private let attributionStore = AttributionStore()
+    private let workQueue = DispatchQueue(label: "local.codexhub.model-work", qos: .utility)
+    private let minimumRefreshInterval: TimeInterval = 60
     let settings = HubSettings()
     @Published var accounts: [CodexAccount] = []
     @Published var usage = UsageSnapshot(today: .zero, todayByAccount: [:], recentDaily: [], scannedFiles: 0, lastError: nil)
@@ -64,9 +66,15 @@ final class CodexHubModel: ObservableObject {
 
     func refresh(force: Bool) {
         guard !isRefreshing else { return }
+        if !force,
+           let lastRefreshDate,
+           Date().timeIntervalSince(lastRefreshDate) < minimumRefreshInterval {
+            return
+        }
         isRefreshing = true
-        DispatchQueue.global(qos: .utility).async {
-            let listed = self.authService.listAccounts(useAPI: self.settings.quotaAPIEnabled)
+        let useQuotaAPI = settings.quotaAPIEnabled
+        workQueue.async {
+            let listed = self.authService.listAccounts(useAPI: useQuotaAPI)
             let accounts = listed.accounts
             let defaultLegacy = accounts.first(where: { $0.email.lowercased().hasPrefix("n") || $0.email.lowercased().contains("snu") })?.email
                 ?? accounts.first?.email
@@ -135,8 +143,9 @@ final class CodexHubModel: ObservableObject {
         if usageDetails != nil && !force { return }
         guard !isLoadingDetails else { return }
         isLoadingDetails = true
-        DispatchQueue.global(qos: .utility).async {
-            let details = self.usageScanner.scanDetails(attribution: self.attributionStore, accounts: self.accounts)
+        let accounts = self.accounts
+        workQueue.async {
+            let details = self.usageScanner.scanDetails(attribution: self.attributionStore, accounts: accounts)
             DispatchQueue.main.async {
                 self.usageDetails = details
                 self.isLoadingDetails = false
@@ -150,7 +159,7 @@ final class CodexHubModel: ObservableObject {
     func setQuotaAPIEnabled(_ enabled: Bool) {
         guard settings.quotaAPIEnabled != enabled || quotaAPIStatus == .failed else { return }
         isRefreshing = true
-        DispatchQueue.global(qos: .userInitiated).async {
+        workQueue.async {
             let result = self.authService.setQuotaAPIEnabled(enabled)
             DispatchQueue.main.async {
                 if result.status != 0 {

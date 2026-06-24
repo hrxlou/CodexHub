@@ -8,8 +8,14 @@ enum HubPanel {
 }
 
 enum HubImages {
-    static let appIcon = image(named: "CodexHubIcon", fallbackSymbol: "chart.bar.fill")
+    static let appIcon = image(named: "CodexHubIconLight", fallbackSymbol: "chart.bar.fill")
+    static let appIconLight = image(named: "CodexHubIconLight", fallbackSymbol: "chart.bar.fill")
+    static let appIconDark = image(named: "CodexHubIconDark", fallbackSymbol: "chart.bar.fill")
     static let menuIcon = image(named: "CodexHubMenuIcon", fallbackSymbol: "chart.bar.fill")
+
+    static func appIcon(for colorScheme: ColorScheme) -> NSImage {
+        colorScheme == .dark ? appIconDark : appIconLight
+    }
 
     private static func image(named name: String, fallbackSymbol: String) -> NSImage {
         if let url = Bundle.main.url(forResource: name, withExtension: "png"),
