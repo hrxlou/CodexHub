@@ -495,14 +495,14 @@ struct Format {
     }
 
     static func relative(_ date: Date?) -> String {
-        guard let date else { return L.text(ko: "업데이트 --", en: "Updated --") }
+        guard let date else { return L.text(ko: "업데이트 없음", en: "Updated --") }
         let seconds = max(Int(Date().timeIntervalSince(date)), 0)
-        if seconds < 5 { return L.text(ko: "방금 업데이트됨", en: "Updated just now") }
-        if seconds < 60 { return L.text(ko: "\(seconds)초 전 업데이트됨", en: "Updated \(seconds)s ago") }
+        if seconds < 5 { return L.text(ko: "방금 업데이트", en: "Updated just now") }
+        if seconds < 60 { return L.text(ko: "\(seconds)초 전 업데이트", en: "Updated \(seconds)s ago") }
         let minutes = seconds / 60
-        if minutes < 60 { return L.text(ko: "\(minutes)분 전 업데이트됨", en: "Updated \(minutes)m ago") }
+        if minutes < 60 { return L.text(ko: "\(minutes)분 전 업데이트", en: "Updated \(minutes)m ago") }
         let hours = minutes / 60
-        return L.text(ko: "\(hours)시간 전 업데이트됨", en: "Updated \(hours)h ago")
+        return L.text(ko: "\(hours)시간 전 업데이트", en: "Updated \(hours)h ago")
     }
 
     private static func compact(_ value: Double, suffix: String) -> String {

@@ -97,12 +97,10 @@ final class HubSettings: ObservableObject {
                 if SMAppService.mainApp.status != .enabled {
                     try SMAppService.mainApp.register()
                 }
-                statusMessage = L.launchAtLoginEnabled
             } else {
                 if SMAppService.mainApp.status == .enabled {
                     try SMAppService.mainApp.unregister()
                 }
-                statusMessage = L.launchAtLoginDisabled
             }
         } catch {
             statusMessage = error.localizedDescription

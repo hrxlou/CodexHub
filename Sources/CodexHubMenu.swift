@@ -295,15 +295,15 @@ struct CodexHubMenu: View {
                 languageRow()
                 Divider().opacity(0.45)
                 settingToggle(
-                    title: L.quotaAPI,
-                    subtitle: L.quotaAPISubtitle,
-                    isOn: Binding(get: { settings.quotaAPIEnabled }, set: { model.setQuotaAPIEnabled($0) })
-                )
-                Divider().opacity(0.45)
-                settingToggle(
                     title: L.launchAtLogin,
                     subtitle: L.launchAtLoginSubtitle,
                     isOn: Binding(get: { settings.launchAtLogin }, set: { settings.launchAtLogin = $0 })
+                )
+                Divider().opacity(0.45)
+                settingToggle(
+                    title: L.quotaAPI,
+                    subtitle: L.quotaAPISubtitle,
+                    isOn: Binding(get: { settings.quotaAPIEnabled }, set: { model.setQuotaAPIEnabled($0) })
                 )
             }
 

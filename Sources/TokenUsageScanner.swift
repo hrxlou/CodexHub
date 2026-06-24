@@ -83,6 +83,11 @@ private struct UsageScanFailure: Error {
     let message: String
 }
 
+private enum RollupMode {
+    case todayOnly
+    case full
+}
+
 private struct UsageAttribution {
     let historicalEmail: String?
     let todayStart: Date
@@ -140,7 +145,7 @@ final class TokenUsageScanner {
     private func scanUnlocked(attribution: AttributionStore, accounts: [CodexAccount]) -> UsageSnapshot {
         let calendar = Calendar.current
         let rangeStart = calendar.startOfDay(for: Date())
-        let result = scanSessions(from: rangeStart, attribution: attribution, accounts: accounts)
+        let result = scanSessions(from: rangeStart, attribution: attribution, accounts: accounts, rollupMode: .todayOnly)
         switch result {
         case .failure(let failure):
             return UsageSnapshot(today: .zero, todayByAccount: [:], recentDaily: [], scannedFiles: 0, lastError: failure.message)
@@ -161,7 +166,7 @@ final class TokenUsageScanner {
         let todayStart = calendar.startOfDay(for: now)
         let weekStart = calendar.dateInterval(of: .weekOfYear, for: now)?.start ?? todayStart
         let monthStart = calendar.dateInterval(of: .month, for: now)?.start ?? weekStart
-        let result = scanSessions(from: min(weekStart, monthStart), attribution: attribution, accounts: accounts)
+        let result = scanSessions(from: min(weekStart, monthStart), attribution: attribution, accounts: accounts, rollupMode: .full)
         switch result {
         case .failure(let failure):
             return UsageDetailSnapshot(today: .zero, week: .zero, month: .zero, weekByAccount: [:], monthByAccount: [:], recentDaily: [], scannedFiles: 0, lastError: failure.message)
@@ -179,7 +184,12 @@ final class TokenUsageScanner {
         }
     }
 
-    private func scanSessions(from rangeStart: Date, attribution: AttributionStore, accounts: [CodexAccount]) -> Result<UsageRollup, UsageScanFailure> {
+    private func scanSessions(
+        from rangeStart: Date,
+        attribution: AttributionStore,
+        accounts: [CodexAccount],
+        rollupMode: RollupMode
+    ) -> Result<UsageRollup, UsageScanFailure> {
         let root = fileManager.homeDirectoryForCurrentUser
             .appendingPathComponent(".codex", isDirectory: true)
             .appendingPathComponent("sessions", isDirectory: true)
@@ -231,7 +241,8 @@ final class TokenUsageScanner {
             weekStart: weekStart,
             monthStart: monthStart,
             calendar: calendar,
-            attribution: attributionPolicy
+            attribution: attributionPolicy,
+            mode: rollupMode
         )
         return .success(rollup)
     }
@@ -374,7 +385,8 @@ final class TokenUsageScanner {
         weekStart: Date,
         monthStart: Date,
         calendar: Calendar,
-        attribution: UsageAttribution
+        attribution: UsageAttribution,
+        mode: RollupMode
     ) -> UsageRollup {
         var today: UsageAggregate = .zero
         var week: UsageAggregate = .zero
@@ -384,7 +396,7 @@ final class TokenUsageScanner {
         var monthByAccount: [String: UsageAggregate] = [:]
         var daily: [Date: UsageAggregate] = [:]
         var recordCount = 0
-        let dailyStart = min(weekStart, monthStart)
+        let dailyStart = mode == .todayOnly ? todayStart : min(weekStart, monthStart)
 
         for record in records {
             recordCount += 1
@@ -394,11 +406,11 @@ final class TokenUsageScanner {
                 let aggregate = entry.aggregate
                 let email = attribution.email(for: entry.timestamp)
                 daily[date] = (daily[date] ?? .zero).adding(aggregate)
-                if entry.timestamp >= monthStart {
+                if mode == .full, entry.timestamp >= monthStart {
                     month = month.adding(aggregate)
                     monthByAccount[email] = (monthByAccount[email] ?? .zero).adding(aggregate)
                 }
-                if date >= weekStart {
+                if mode == .full, date >= weekStart {
                     week = week.adding(aggregate)
                     weekByAccount[email] = (weekByAccount[email] ?? .zero).adding(aggregate)
                 }
