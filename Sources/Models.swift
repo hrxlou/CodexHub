@@ -59,14 +59,28 @@ struct CodexAccount: Codable, Equatable {
             isActive: active
         )
     }
+
+    func withUnavailableRateLimitsIfNeeded() -> CodexAccount {
+        CodexAccount(
+            selector: selector,
+            email: email,
+            plan: plan,
+            fiveHourUsage: fiveHourUsedPercent == nil ? "Unavailable" : fiveHourUsage,
+            fiveHourUsedPercent: fiveHourUsedPercent,
+            weeklyUsage: weeklyUsedPercent == nil || weeklyUsage == "-" ? "Unavailable" : weeklyUsage,
+            weeklyUsedPercent: weeklyUsedPercent,
+            lastActivity: lastActivity,
+            isActive: isActive
+        )
+    }
 }
 
-struct AppServerRateLimits {
+struct AppServerRateLimits: Codable {
     let primary: AppServerRateLimitWindow?
     let secondary: AppServerRateLimitWindow?
 }
 
-struct AppServerRateLimitWindow {
+struct AppServerRateLimitWindow: Codable {
     enum Kind {
         case fiveHour
         case weekly
@@ -292,33 +306,6 @@ struct UsageDetailSnapshot {
     let recentDaily: [(Date, UsageAggregate)]
     let scannedFiles: Int
     let lastError: String?
-}
-
-struct UsageDetailCacheFile: Codable {
-    let cacheKey: String
-    let newestFileMTime: Date?
-    let scannedFiles: Int
-    let today: UsageAggregate
-    let week: UsageAggregate
-    let month: UsageAggregate
-    let recentDaily: [CachedDailyUsage]
-    let generatedAt: Date
-
-    var snapshot: UsageDetailSnapshot {
-        UsageDetailSnapshot(
-            today: today,
-            week: week,
-            month: month,
-            recentDaily: recentDaily.map { ($0.date, $0.aggregate) },
-            scannedFiles: scannedFiles,
-            lastError: nil
-        )
-    }
-}
-
-struct CachedDailyUsage: Codable {
-    let date: Date
-    let aggregate: UsageAggregate
 }
 
 struct AttributionEvent: Codable, Equatable {
