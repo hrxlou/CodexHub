@@ -102,15 +102,15 @@ final class CodexAuthService {
             let updated = accounts.map { account in
                 account.isActive ? account.withUnavailableRateLimitsIfNeeded() : account
             }
-            return (updated, false, L.text(ko: "활성 계정의 app-server 할당량을 사용할 수 없습니다", en: "Active account app-server quota unavailable"))
+            return (updated, false, L.text(ko: "활성 계정의 로컬 상태 정보를 사용할 수 없습니다", en: "Active account local status unavailable"))
         }
         let limits = lookup.limits
         let updated = accounts.map { account in
             account.isActive ? account.applyingAppServerRateLimits(limits) : account
         }
         let notice = lookup.fromCache
-            ? L.text(ko: "활성 계정 할당량에 캐시된 app-server 대체값을 사용 중입니다", en: "Using cached app-server fallback for active account quota only")
-            : L.text(ko: "활성 계정 할당량에 app-server 대체값을 사용 중입니다", en: "Using app-server fallback for active account quota only")
+            ? L.text(ko: "활성 계정에 캐시된 로컬 상태 정보를 표시 중입니다", en: "Using cached local status fallback for active account only")
+            : L.text(ko: "활성 계정에 로컬 상태 정보를 표시 중입니다", en: "Using local status fallback for active account only")
         return (updated, true, notice)
     }
 
