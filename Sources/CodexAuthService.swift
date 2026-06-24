@@ -36,7 +36,7 @@ final class CodexAuthService {
         }
 
         let parsed = parseAccounts(result.output)
-        let fallback = applyAppServerFallbackIfUseful(parsed, always: !useAPI)
+        let fallback = applyAppServerFallbackIfUseful(parsed)
         var status: QuotaAPIStatus = useAPI ? .on : .off
         if fallback.usedAppServer {
             status = .fallback
@@ -90,12 +90,10 @@ final class CodexAuthService {
         }
     }
 
-    private func applyAppServerFallbackIfUseful(_ accounts: [CodexAccount], always: Bool) -> (accounts: [CodexAccount], usedAppServer: Bool, notice: String?) {
+    private func applyAppServerFallbackIfUseful(_ accounts: [CodexAccount]) -> (accounts: [CodexAccount], usedAppServer: Bool, notice: String?) {
         guard let active = accounts.first(where: { $0.isActive }) else { return (accounts, false, nil) }
-        let needsFallback = always
-            || active.fiveHourUsedPercent == nil
+        let needsFallback = active.fiveHourUsedPercent == nil
             || active.weeklyUsedPercent == nil
-            || active.weeklyUsedPercent == 0
             || active.weeklyUsage == "-"
             || active.weeklyUsage == "Unavailable"
         guard needsFallback else { return (accounts, false, nil) }

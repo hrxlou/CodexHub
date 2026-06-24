@@ -290,10 +290,7 @@ struct AccountUsageSummary {
 
 struct UsageSnapshot {
     let today: UsageAggregate
-    let weekLocal: UsageAggregate
-    let monthLocal: UsageAggregate
     let todayByAccount: [String: UsageAggregate]
-    let weekByAccount: [String: UsageAggregate]
     let recentDaily: [(Date, UsageAggregate)]
     let scannedFiles: Int
     let lastError: String?
@@ -303,6 +300,8 @@ struct UsageDetailSnapshot {
     let today: UsageAggregate
     let week: UsageAggregate
     let month: UsageAggregate
+    let weekByAccount: [String: UsageAggregate]
+    let monthByAccount: [String: UsageAggregate]
     let recentDaily: [(Date, UsageAggregate)]
     let scannedFiles: Int
     let lastError: String?
