@@ -170,6 +170,13 @@ final class CodexHubModel: ObservableObject {
         }
     }
 
+    func resetAttributionHistory() {
+        attributionStore.resetHistory(currentEmail: activeAccount?.email)
+        usageDetails = nil
+        settings.statusMessage = "Attribution history reset"
+        refresh(force: true)
+    }
+
     private func evaluateAutomation() {
         guard let active = activeAccount, let used = active.usagePercent else { return }
         let remaining = max(0, min(100, 100 - used))

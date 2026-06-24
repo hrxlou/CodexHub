@@ -80,12 +80,35 @@ struct CodexHubMenu: View {
             Text("Accounts")
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(.secondary)
-            HStack(spacing: 10) {
-                ForEach(model.sortedAccounts.prefix(2), id: \.email) { account in
+            if model.sortedAccounts.count <= 1 {
+                ForEach(model.sortedAccounts, id: \.email) { account in
                     AccountCardView(model: model, account: account)
                 }
+            } else if model.sortedAccounts.count == 2 {
+                LazyVGrid(columns: accountColumns, spacing: 10) {
+                    ForEach(model.sortedAccounts, id: \.email) { account in
+                        AccountCardView(model: model, account: account)
+                    }
+                }
+            } else {
+                ScrollView(.vertical, showsIndicators: true) {
+                    LazyVGrid(columns: accountColumns, spacing: 10) {
+                        ForEach(model.sortedAccounts, id: \.email) { account in
+                            AccountCardView(model: model, account: account)
+                        }
+                    }
+                    .padding(.trailing, 4)
+                }
+                .frame(maxHeight: 300)
             }
         }
+    }
+
+    private var accountColumns: [GridItem] {
+        [
+            GridItem(.flexible(minimum: 0), spacing: 10),
+            GridItem(.flexible(minimum: 0), spacing: 10)
+        ]
     }
 
     private var switchProgressOverlay: some View {
@@ -316,6 +339,23 @@ struct CodexHubMenu: View {
                         .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
+                }
+            }
+
+            sectionCard(title: "Privacy") {
+                HStack(alignment: .center, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Attribution history")
+                            .font(.system(size: 12, weight: .semibold))
+                        Text("Reset saved account attribution timeline")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    Spacer()
+                    HubActionButton(title: "Reset", systemImage: "trash", tone: .danger) {
+                        model.resetAttributionHistory()
+                    }
                 }
             }
         }

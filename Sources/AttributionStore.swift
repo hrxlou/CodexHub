@@ -25,6 +25,16 @@ final class AttributionStore {
         save()
     }
 
+    func resetHistory(currentEmail: String?) {
+        if let currentEmail, currentEmail.isEmpty == false {
+            events = [AttributionEvent(timestamp: Date(), email: currentEmail)]
+            save()
+        } else {
+            events = []
+            try? FileManager.default.removeItem(at: fileURL)
+        }
+    }
+
     func accountEmail(at date: Date) -> String {
         var current = "Unknown"
         for event in events where event.timestamp <= date {
