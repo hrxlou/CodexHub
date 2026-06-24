@@ -107,8 +107,8 @@ struct CodexHubMenu: View {
 
     private var accountColumns: [GridItem] {
         [
-            GridItem(.flexible(minimum: 0), spacing: 10),
-            GridItem(.flexible(minimum: 0), spacing: 10)
+            GridItem(.flexible(minimum: 0), spacing: 14),
+            GridItem(.flexible(minimum: 0), spacing: 14)
         ]
     }
 
@@ -217,13 +217,7 @@ struct CodexHubMenu: View {
         VStack(alignment: .leading, spacing: 9) {
             if model.isLoadingDetails && model.usageDetails == nil {
                 sectionCard(title: L.tokenCost) {
-                    HStack(spacing: 8) {
-                        ProgressView()
-                            .scaleEffect(0.7)
-                        Text(L.loadingUsageDetails)
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(.secondary)
-                    }
+                    usageDetailsProgressView
                 }
             } else {
                 let details = model.usageDetails ?? UsageDetailSnapshot(
@@ -236,6 +230,12 @@ struct CodexHubMenu: View {
                     scannedFiles: model.usage.scannedFiles,
                     lastError: model.usage.lastError
                 )
+
+                if model.isLoadingDetails {
+                    sectionCard(title: L.loadingUsageDetails) {
+                        usageDetailsProgressView
+                    }
+                }
 
                 tokenCostSummaryCard(details)
 
@@ -264,6 +264,32 @@ struct CodexHubMenu: View {
         }
         .onAppear {
             model.loadUsageDetails(force: false)
+        }
+    }
+
+    private var usageDetailsProgressView: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(L.loadingUsageDetails)
+                    .font(.system(size: 12, weight: .semibold))
+                Spacer()
+                if let progress = model.usageDetailsProgress {
+                    Text("\(Int((progress * 100).rounded()))%")
+                        .font(.system(size: 11, weight: .semibold, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            ProgressView(value: model.usageDetailsProgress ?? 0, total: 1)
+                .progressViewStyle(.linear)
+
+            if let progressText = model.usageDetailsProgressText {
+                Text(progressText)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
         }
     }
 

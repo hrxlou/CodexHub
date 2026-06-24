@@ -174,22 +174,23 @@ struct AccountCardView: View {
     }
 
     private func quotaRow(label: String, percent: String, reset: String) -> some View {
-        HStack(alignment: .center, spacing: 6) {
+        HStack(alignment: .center, spacing: 5) {
             Text(label)
                 .font(.system(size: 12, weight: .semibold, design: .rounded))
                 .foregroundStyle(.secondary)
-                .frame(width: 24, height: 24, alignment: .leading)
+                .frame(width: 22, height: 24, alignment: .leading)
             Text(percent)
                 .font(.system(size: 18, weight: .semibold, design: .rounded))
                 .foregroundStyle(account.isActive ? Color.green : Color.primary.opacity(0.80))
                 .monospacedDigit()
-                .frame(width: 64, height: 24, alignment: .leading)
+                .frame(width: 58, height: 24, alignment: .leading)
             Spacer()
             Text(reset)
                 .font(.system(size: 11, weight: .semibold, design: .rounded))
                 .foregroundStyle(.secondary)
                 .monospacedDigit()
-                .frame(width: 50, height: 24, alignment: .trailing)
+                .minimumScaleFactor(0.92)
+                .frame(width: 48, height: 24, alignment: .trailing)
         }
     }
 
