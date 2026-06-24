@@ -83,7 +83,7 @@ final class HubSettings: ObservableObject {
         reminderThreshold = defaults.object(forKey: Keys.reminderThreshold) as? Int ?? 10
         autoSwitchEnabled = defaults.object(forKey: Keys.autoSwitchEnabled) as? Bool ?? false
         autoSwitchThreshold = defaults.object(forKey: Keys.autoSwitchThreshold) as? Int ?? 10
-        quotaAPIEnabled = defaults.object(forKey: Keys.quotaAPIEnabled) as? Bool ?? true
+        quotaAPIEnabled = defaults.object(forKey: Keys.quotaAPIEnabled) as? Bool ?? false
         language = AppLanguage(rawValue: defaults.string(forKey: Keys.language) ?? "") ?? AppLanguage.systemDefault
     }
 

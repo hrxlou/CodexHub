@@ -27,3 +27,11 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+## External Tools
+
+CodexHub can invoke a user-installed `codex-auth` command-line tool to read and switch accounts already configured on the user's Mac. `codex-auth` is not bundled with CodexHub and is not redistributed in this repository.
+
+Source: https://github.com/Loongphy/codex-auth
+
+License: MIT License

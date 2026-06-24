@@ -30,7 +30,7 @@ enum L {
     static var language: String { text(ko: "표시 언어", en: "Language") }
     static var languageSubtitle: String { text(ko: "앱에서 사용할 언어", en: "Language used in the app UI") }
     static var quotaAPI: String { text(ko: "상세 상태 조회 (실험적)", en: "Detailed status lookup (experimental)") }
-    static var quotaAPISubtitle: String { text(ko: "상태 조회가 불안정하면 끄세요", en: "Turn off if status lookup is unreliable") }
+    static var quotaAPISubtitle: String { text(ko: "조회가 불안정하면 끄세요", en: "Turn off if status is unreliable") }
     static var launchAtLogin: String { text(ko: "로그인 시 실행", en: "Launch at login") }
     static var launchAtLoginSubtitle: String { text(ko: "로그인하면 CodexHub 자동 실행", en: "Open CodexHub automatically after sign-in") }
     static var automation: String { text(ko: "알림 및 제안", en: "Reminders and suggestions") }
