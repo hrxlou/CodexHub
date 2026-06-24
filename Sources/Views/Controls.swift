@@ -16,15 +16,21 @@ struct ThresholdControl: View {
             }
             .onHover { hoverMinus = $0 }
 
-            HStack(spacing: 1) {
+            ZStack {
+                Text("\(value)%")
+                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(isEditing ? Color.clear : Color.primary)
+                    .frame(width: 44, alignment: .center)
+
                 TextField("", text: $textValue)
                     .font(.system(size: 11, weight: .semibold, design: .rounded))
                     .monospacedDigit()
-                    .multilineTextAlignment(.trailing)
+                    .multilineTextAlignment(.center)
                     .textFieldStyle(.plain)
-                    .foregroundColor(isEditing ? .accentColor : .primary)
+                    .foregroundColor(isEditing ? .accentColor : .clear)
                     .accentColor(.accentColor)
-                    .frame(width: 28)
+                    .frame(width: 44, alignment: .center)
                     .focused($isEditing)
                     .onSubmit {
                         finishEditing()
@@ -33,10 +39,6 @@ struct ThresholdControl: View {
                     .onChange(of: textValue) {
                         updateDraft()
                     }
-                Text("%")
-                    .font(.system(size: 11, weight: .semibold, design: .rounded))
-                    .foregroundStyle(isEditing ? Color.accentColor : Color.secondary)
-                    .frame(width: 10, alignment: .leading)
             }
             .frame(width: 58)
             .padding(.vertical, 6)
@@ -160,7 +162,7 @@ struct AccountCardView: View {
             .padding(12)
             .frame(maxWidth: .infinity, minHeight: 136, alignment: .topLeading)
             .glassPanel(
-                tint: account.isActive ? Color.green.opacity(0.12) : Color.white.opacity(0.08),
+                tint: accountTint,
                 stroke: accountStroke,
                 hovering: hovering && !account.isActive
             )
@@ -193,6 +195,11 @@ struct AccountCardView: View {
 
     private var accountStroke: Color {
         if account.isActive { return Color.green.opacity(0.30) }
-        return Color.primary.opacity(hovering ? 0.16 : 0.08)
+        return Color.primary.opacity(hovering ? 0.22 : 0.08)
+    }
+
+    private var accountTint: Color {
+        if account.isActive { return Color.green.opacity(0.12) }
+        return Color.white.opacity(hovering ? 0.14 : 0.08)
     }
 }

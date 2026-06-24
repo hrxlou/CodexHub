@@ -8,7 +8,7 @@ final class CodexHubModel: ObservableObject {
     private let attributionStore = AttributionStore()
     let settings = HubSettings()
     @Published var accounts: [CodexAccount] = []
-    @Published var usage = UsageSnapshot(today: .zero, weekLocal: .zero, monthLocal: .zero, todayByAccount: [:], weekByAccount: [:], recentDaily: [], scannedFiles: 0, lastError: nil)
+    @Published var usage = UsageSnapshot(today: .zero, todayByAccount: [:], recentDaily: [], scannedFiles: 0, lastError: nil)
     @Published var usageDetails: UsageDetailSnapshot?
     @Published var lastError: String?
     @Published var isRefreshing = false
@@ -56,12 +56,6 @@ final class CodexHubModel: ObservableObject {
             .sorted { displayName(for: $0.email) < displayName(for: $1.email) }
     }
 
-    var weekByAccountRows: [AccountUsageSummary] {
-        usage.weekByAccount
-            .map { AccountUsageSummary(email: $0.key, aggregate: $0.value) }
-            .sorted { displayName(for: $0.email) < displayName(for: $1.email) }
-    }
-
     func refresh(force: Bool) {
         guard !isRefreshing else { return }
         isRefreshing = true
@@ -74,7 +68,7 @@ final class CodexHubModel: ObservableObject {
             if let active = accounts.first(where: { $0.isActive }) {
                 self.attributionStore.recordActiveAccount(active.email)
             }
-            let usage = self.usageScanner.scan(attribution: self.attributionStore)
+            let usage = self.usageScanner.scan(attribution: self.attributionStore, accounts: accounts)
             DispatchQueue.main.async {
                 self.accounts = accounts
                 self.usage = usage
@@ -136,7 +130,7 @@ final class CodexHubModel: ObservableObject {
         guard !isLoadingDetails else { return }
         isLoadingDetails = true
         DispatchQueue.global(qos: .utility).async {
-            let details = self.usageScanner.scanDetails(attribution: self.attributionStore)
+            let details = self.usageScanner.scanDetails(attribution: self.attributionStore, accounts: self.accounts)
             DispatchQueue.main.async {
                 self.usageDetails = details
                 self.isLoadingDetails = false

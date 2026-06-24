@@ -213,7 +213,7 @@ struct CodexHubMenu: View {
     }
 
     private var tokenCostDetails: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 9) {
             if model.isLoadingDetails && model.usageDetails == nil {
                 sectionCard(title: "Token Cost") {
                     HStack(spacing: 8) {
@@ -227,8 +227,10 @@ struct CodexHubMenu: View {
             } else {
                 let details = model.usageDetails ?? UsageDetailSnapshot(
                     today: model.usage.today,
-                    week: model.usage.weekLocal,
-                    month: model.usage.monthLocal,
+                    week: .zero,
+                    month: .zero,
+                    weekByAccount: [:],
+                    monthByAccount: [:],
                     recentDaily: model.usage.recentDaily,
                     scannedFiles: model.usage.scannedFiles,
                     lastError: model.usage.lastError
@@ -242,19 +244,14 @@ struct CodexHubMenu: View {
                             .font(.system(size: 12, weight: .medium))
                             .foregroundStyle(.secondary)
                     } else {
-                        ForEach(Array(details.recentDaily.prefix(7).enumerated()), id: \.offset) { _, row in
-                            HStack {
-                                Text(Format.day(row.0))
-                                    .lineLimit(1)
-                                Spacer()
-                                Text(Format.summary(row.1))
-                                    .fontWeight(.semibold)
-                                    .lineLimit(1)
-                            }
-                            .font(.system(size: 12))
+                        ForEach(Array(details.recentDaily.prefix(3).enumerated()), id: \.offset) { _, row in
+                            compactUsageRow(label: Format.day(row.0), value: Format.summary(row.1))
                         }
                     }
                 }
+
+                accountUsageSection(title: "By Account This Week", usage: details.weekByAccount)
+                accountUsageSection(title: "By Account This Month", usage: details.monthByAccount)
             }
 
             HStack {
@@ -437,6 +434,35 @@ struct CodexHubMenu: View {
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .glassPanel(cornerRadius: 13, tint: Color.white.opacity(0.08), stroke: Color.primary.opacity(0.08))
+    }
+
+    private func accountUsageSection(title: String, usage: [String: UsageAggregate]) -> some View {
+        sectionCard(title: title) {
+            let rows = usage
+                .map { AccountUsageSummary(email: $0.key, aggregate: $0.value) }
+                .sorted { model.displayName(for: $0.email) < model.displayName(for: $1.email) }
+            if rows.isEmpty {
+                Text("No attributed usage yet")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(rows, id: \.email) { row in
+                    compactUsageRow(label: model.displayName(for: row.email), value: Format.summary(row.aggregate))
+                }
+            }
+        }
+    }
+
+    private func compactUsageRow(label: String, value: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Text(label)
+                .lineLimit(1)
+            Spacer(minLength: 8)
+            Text(value)
+                .fontWeight(.semibold)
+                .lineLimit(1)
+        }
+        .font(.system(size: 11))
     }
 
     private func metricRow(_ label: String, value: String, cost: String, icon: String) -> some View {
