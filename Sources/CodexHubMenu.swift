@@ -85,18 +85,19 @@ struct CodexHubMenu: View {
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(.secondary)
                 Spacer()
-                HubActionButton(title: L.manageAccounts, systemImage: "person.crop.circle.badge.gearshape", compact: true) {
+                HubActionButton(title: L.manageAccounts, systemImage: "person.crop.circle.badge.gearshape", compact: true, titleOnly: true) {
                     panel = .accountManagement
                 }
             }
-            if model.sortedAccounts.count <= 1 {
-                ForEach(model.sortedAccounts, id: \.identity) { account in
-                    AccountCardView(model: model, account: account)
-                }
-            } else if model.sortedAccounts.count == 2 {
+            if model.sortedAccounts.count <= 2 {
                 LazyVGrid(columns: accountColumns, spacing: 10) {
                     ForEach(model.sortedAccounts, id: \.identity) { account in
                         AccountCardView(model: model, account: account)
+                    }
+                    if model.sortedAccounts.count < 2 {
+                        AddAccountCardView(isAddingAccount: model.isAddingAccount) {
+                            model.addAccount()
+                        }
                     }
                 }
             } else {
@@ -311,8 +312,10 @@ struct CodexHubMenu: View {
                         Text(model.displayName(for: row.email))
                             .lineLimit(1)
                         Spacer()
-                        Text(Format.money(row.aggregate.costs.totalCost))
+                        Text(Format.summary(row.aggregate))
                             .fontWeight(.semibold)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.82)
                     }
                     .font(.system(size: 12))
                 }

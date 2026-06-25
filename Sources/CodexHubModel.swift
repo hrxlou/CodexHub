@@ -59,7 +59,7 @@ final class CodexHubModel: ObservableObject {
             return "CodexHub · \(Format.money(usage.today.costs.totalCost))"
         }
         let activeUsage = usage.todayByAccount[activeAccount.email] ?? .zero
-        return "\(activeAccount.label) · 5H \(Format.percentUsed(activeAccount.fiveHourUsedPercent)) · W \(Format.percentUsed(activeAccount.weeklyUsedPercent)) · \(Format.money(activeUsage.costs.totalCost))"
+        return "\(activeAccount.label) · 5H \(Format.percentRemaining(fromUsed: activeAccount.fiveHourUsedPercent)) · W \(Format.percentRemaining(fromUsed: activeAccount.weeklyUsedPercent)) · \(Format.money(activeUsage.costs.totalCost))"
     }
 
     var sortedAccounts: [CodexAccount] {
@@ -111,7 +111,7 @@ final class CodexHubModel: ObservableObject {
     func accountMenuTitle(_ account: CodexAccount) -> String {
         let marker = account.isActive ? "*" : " "
         let accountUsage = usage.todayByAccount[account.email] ?? .zero
-        return "\(marker) \(account.label)  5H \(Format.percentUsed(account.fiveHourUsedPercent))  W \(Format.percentUsed(account.weeklyUsedPercent))  \(L.today) \(Format.summary(accountUsage))  \(compactEmail(account.email))"
+        return "\(marker) \(account.label)  5H \(Format.percentRemaining(fromUsed: account.fiveHourUsedPercent))  W \(Format.percentRemaining(fromUsed: account.weeklyUsedPercent))  \(L.today) \(Format.summary(accountUsage))  \(compactEmail(account.email))"
     }
 
     func displayName(for email: String) -> String {

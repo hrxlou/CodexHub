@@ -89,6 +89,7 @@ struct HubActionButton: View {
     var tone: HubButtonStyle.Tone = .neutral
     var compact = true
     var iconOnly = false
+    var titleOnly = false
     let action: () -> Void
     @State private var hovering = false
 
@@ -97,6 +98,9 @@ struct HubActionButton: View {
             if iconOnly {
                 Label(title, systemImage: systemImage)
                     .labelStyle(.iconOnly)
+            } else if titleOnly {
+                Text(title)
+                    .frame(minWidth: 24, alignment: .center)
             } else {
                 Label(title, systemImage: systemImage)
             }

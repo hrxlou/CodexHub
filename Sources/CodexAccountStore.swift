@@ -49,7 +49,7 @@ final class CodexAccountStore {
             }
             return AccountLoadResult(accounts: [], error: L.text(ko: "저장된 Codex 계정이 없습니다", en: "No stored Codex accounts found"))
         }
-        try? syncCurrentLoginMetadataLocked()
+        try? syncCurrentLoginStateLocked()
         return loadAccountsFromRegistryLocked()
     }
 
@@ -83,9 +83,9 @@ final class CodexAccountStore {
         defer { lock.unlock() }
         do {
             _ = try captureCurrentLoginLocked(alias: nil)
-            var registry = try readRegistryLocked()
+            let registry = try readRegistryLocked()
             guard let accounts = registry["accounts"] as? [[String: Any]],
-                  let index = accounts.firstIndex(where: { ($0["account_key"] as? String) == identity }) else {
+                  accounts.contains(where: { ($0["account_key"] as? String) == identity }) else {
                 return CommandResult(status: 1, output: L.text(ko: "계정을 찾지 못했습니다", en: "Account was not found"))
             }
             let snapshotURL = authSnapshotURL(for: identity)
@@ -94,18 +94,25 @@ final class CodexAccountStore {
             }
 
             try createDirectoryIfNeededLocked()
-            backupFileIfPresent(authURL, prefix: "auth.json.bak")
+            let previousAuthBackup = backupFileIfPresent(authURL, prefix: "auth.json.bak")
             try replaceFile(at: authURL, withContentsOf: snapshotURL)
             try setPrivatePermissions(authURL)
 
-            var updatedAccounts = accounts
-            let nowSeconds = Int(Date().timeIntervalSince1970)
-            let nowMilliseconds = Int(Date().timeIntervalSince1970 * 1000)
-            updatedAccounts[index]["last_used_at"] = nowSeconds
-            registry["accounts"] = updatedAccounts
-            registry["active_account_key"] = identity
-            registry["active_account_activated_at_ms"] = nowMilliseconds
-            try writeRegistryLocked(registry)
+            let validation = validateCurrentLogin()
+            guard validation.status == 0 else {
+                if let previousAuthBackup {
+                    try replaceFile(at: authURL, withContentsOf: previousAuthBackup)
+                    try setPrivatePermissions(authURL)
+                    try? syncCurrentLoginStateLocked()
+                }
+                let message = validation.output.trimmingCharacters(in: .whitespacesAndNewlines)
+                return CommandResult(
+                    status: validation.status == 0 ? 1 : validation.status,
+                    output: message.isEmpty ? L.text(ko: "전환한 계정의 로그인이 유효하지 않습니다", en: "The switched account login is not valid") : message
+                )
+            }
+
+            _ = try captureCurrentLoginLocked(alias: nil)
             return CommandResult(status: 0, output: "")
         } catch {
             return CommandResult(status: 1, output: error.localizedDescription)
@@ -252,13 +259,20 @@ final class CodexAccountStore {
         return true
     }
 
-    private func syncCurrentLoginMetadataLocked() throws {
-        guard fileManager.fileExists(atPath: authURL.path) else { return }
+    private func syncCurrentLoginStateLocked() throws {
+        guard fileManager.fileExists(atPath: authURL.path) else {
+            try clearActiveLoginLocked()
+            return
+        }
         let info = extractAuthInfo(from: authURL)
-        guard let identity = info.identity else { return }
+        guard let identity = info.identity else {
+            try clearActiveLoginLocked()
+            return
+        }
         var registry = try readRegistryLocked()
         guard var accounts = registry["accounts"] as? [[String: Any]],
               let existingIndex = accounts.firstIndex(where: { ($0["account_key"] as? String) == identity }) else {
+            _ = try captureCurrentLoginLocked(alias: nil)
             return
         }
         var account = accounts[existingIndex]
@@ -294,6 +308,18 @@ final class CodexAccountStore {
         guard changed else { return }
         accounts[existingIndex] = account
         registry["accounts"] = accounts
+        try writeRegistryLocked(registry)
+    }
+
+    private func clearActiveLoginLocked() throws {
+        var registry = try readRegistryLocked()
+        let activeValue = registry["active_account_key"]
+        let activationValue = registry["active_account_activated_at_ms"]
+        let hasActive = activeValue is String
+        let hasActivation = activationValue != nil && !(activationValue is NSNull)
+        guard hasActive || hasActivation else { return }
+        registry["active_account_key"] = NSNull()
+        registry["active_account_activated_at_ms"] = NSNull()
         try writeRegistryLocked(registry)
     }
 
@@ -414,12 +440,18 @@ final class CodexAccountStore {
             .replacingOccurrences(of: "+", with: "-")
     }
 
-    private func backupFileIfPresent(_ url: URL, prefix: String?) {
-        guard fileManager.fileExists(atPath: url.path) else { return }
+    @discardableResult
+    private func backupFileIfPresent(_ url: URL, prefix: String?) -> URL? {
+        guard fileManager.fileExists(atPath: url.path) else { return nil }
         let stamp = backupTimestamp()
         let backupName = prefix.map { "\($0).\(stamp)" } ?? "\(url.lastPathComponent).bak.\(Int(Date().timeIntervalSince1970))"
         let backupURL = accountsDirectoryURL.appendingPathComponent(backupName)
-        try? fileManager.copyItem(at: url, to: backupURL)
+        do {
+            try fileManager.copyItem(at: url, to: backupURL)
+            return backupURL
+        } catch {
+            return nil
+        }
     }
 
     private func backupTimestamp() -> String {
@@ -447,6 +479,13 @@ final class CodexAccountStore {
 
     private func setPrivatePermissions(_ url: URL) throws {
         try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+    }
+
+    private func validateCurrentLogin() -> CommandResult {
+        guard let codexPath = codexCLIPath() else {
+            return CommandResult(status: 127, output: L.text(ko: "codex 명령을 찾지 못했습니다", en: "codex command was not found"))
+        }
+        return run(codexPath, ["login", "-c", "cli_auth_credentials_store=\"file\"", "status"], timeout: 20)
     }
 
     private func codexCLIPath() -> String? {

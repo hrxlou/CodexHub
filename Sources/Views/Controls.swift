@@ -154,8 +154,8 @@ struct AccountCardView: View {
                     .lineLimit(1)
 
                 VStack(spacing: 6) {
-                    quotaRow(label: "5H", percent: Format.percentUsed(account.fiveHourUsedPercent), reset: Format.resetTime(from: account.fiveHourUsage))
-                    quotaRow(label: "W", percent: Format.percentUsed(account.weeklyUsedPercent), reset: Format.weeklyResetDate(from: account.weeklyUsage))
+                    quotaRow(label: "5H", percent: Format.percentRemaining(fromUsed: account.fiveHourUsedPercent), reset: Format.resetTime(from: account.fiveHourUsage))
+                    quotaRow(label: "W", percent: Format.percentRemaining(fromUsed: account.weeklyUsedPercent), reset: Format.weeklyResetDate(from: account.weeklyUsage))
                 }
                 .padding(.top, 8)
             }
@@ -202,5 +202,54 @@ struct AccountCardView: View {
     private var accountTint: Color {
         if account.isActive { return Color.green.opacity(0.12) }
         return Color.white.opacity(hovering ? 0.14 : 0.08)
+    }
+}
+
+struct AddAccountCardView: View {
+    let isAddingAccount: Bool
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button {
+            guard !isAddingAccount else { return }
+            action()
+        } label: {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .center) {
+                    Image(systemName: isAddingAccount ? "hourglass" : "plus")
+                        .font(.system(size: 13, weight: .bold))
+                        .frame(width: 34, height: 34)
+                        .foregroundStyle(Color.primary)
+                        .background(Color.primary.opacity(hovering ? 0.12 : 0.07))
+                        .clipShape(Circle())
+                    Spacer()
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(isAddingAccount ? L.signingIn : L.addCodexAccount)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Color.primary)
+                        .lineLimit(2)
+                    Text(L.addCodexAccountSubtitle)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+
+                Spacer(minLength: 0)
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, minHeight: 136, alignment: .topLeading)
+            .glassPanel(
+                tint: Color.white.opacity(hovering ? 0.14 : 0.08),
+                stroke: Color.primary.opacity(hovering ? 0.22 : 0.08),
+                hovering: hovering
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(isAddingAccount)
+        .onHover { hovering = $0 }
+        .help(L.addCodexAccount)
     }
 }

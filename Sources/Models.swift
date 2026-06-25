@@ -421,6 +421,11 @@ struct Format {
         return "\(max(0, min(100, used)))%"
     }
 
+    static func percentRemaining(fromUsed used: Int?) -> String {
+        guard let remaining = remainingPercent(fromUsed: used) else { return "--" }
+        return "\(remaining)%"
+    }
+
     static func remainingPercent(fromUsed used: Int?) -> Int? {
         guard let used else { return nil }
         return max(0, min(100, 100 - used))
