@@ -38,19 +38,20 @@ struct HubButtonStyle: ButtonStyle {
     var compact = false
     var hovering = false
     @Environment(\.isEnabled) private var isEnabled
+    private let actionGreen = Color(red: 0.06, green: 0.58, blue: 0.22)
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(size: compact ? 11 : 12, weight: .semibold))
             .foregroundStyle(foreground)
-            .padding(.horizontal, compact ? 10 : 12)
-            .padding(.vertical, compact ? 6 : 8)
+            .padding(.horizontal, compact ? 10 : 11)
+            .padding(.vertical, compact ? 5 : 7)
             .background(background(configuration.isPressed))
             .overlay(
-                RoundedRectangle(cornerRadius: compact ? 8 : 10, style: .continuous)
+                RoundedRectangle(cornerRadius: compact ? 7 : 8, style: .continuous)
                     .stroke(stroke, lineWidth: 1)
             )
-            .clipShape(RoundedRectangle(cornerRadius: compact ? 8 : 10, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: compact ? 7 : 8, style: .continuous))
             .scaleEffect(configuration.isPressed && isEnabled ? 0.97 : 1)
             .opacity(isEnabled ? (configuration.isPressed ? 0.82 : 1) : 0.45)
             .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
@@ -61,15 +62,15 @@ struct HubButtonStyle: ButtonStyle {
         switch tone {
         case .neutral: return isEnabled ? .primary : .secondary
         case .primary: return .white
-        case .danger: return isEnabled ? .red : .secondary
+        case .danger: return isEnabled ? Color.red.opacity(0.90) : .secondary
         }
     }
 
     private var stroke: Color {
         switch tone {
         case .neutral: return Color.primary.opacity(isEnabled ? 0.12 : 0.07)
-        case .primary: return Color.green.opacity(isEnabled ? 0.22 : 0.10)
-        case .danger: return Color.red.opacity(isEnabled ? 0.20 : 0.08)
+        case .primary: return actionGreen.opacity(isEnabled ? 0.22 : 0.10)
+        case .danger: return Color.red.opacity(isEnabled ? 0.14 : 0.06)
         }
     }
 
@@ -81,9 +82,9 @@ struct HubButtonStyle: ButtonStyle {
         case .neutral:
             return Color.primary.opacity(pressed ? 0.14 : (hovering ? 0.10 : 0.07))
         case .primary:
-            return Color.green.opacity(pressed ? 0.80 : (hovering ? 0.92 : 1))
+            return actionGreen.opacity(pressed ? 0.80 : (hovering ? 0.92 : 1))
         case .danger:
-            return Color.red.opacity(pressed ? 0.16 : (hovering ? 0.12 : 0.08))
+            return Color.red.opacity(pressed ? 0.10 : (hovering ? 0.075 : 0.045))
         }
     }
 }
@@ -148,7 +149,7 @@ struct RefreshButton: View {
 }
 
 struct GlassPanel: ViewModifier {
-    var cornerRadius: CGFloat = 14
+    var cornerRadius: CGFloat = 10
     var tint: Color = .clear
     var stroke: Color = Color.primary.opacity(0.10)
     var hovering = false
@@ -165,15 +166,15 @@ struct GlassPanel: ViewModifier {
             )
             .overlay(
                 RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                    .stroke(stroke, lineWidth: hovering ? 1.5 : 1)
+                    .stroke(stroke, lineWidth: 1)
             )
             .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-            .shadow(color: Color.black.opacity(hovering ? 0.13 : 0.09), radius: hovering ? 9 : 6, x: 0, y: 3)
+            .shadow(color: Color.black.opacity(hovering ? 0.09 : 0.055), radius: hovering ? 6 : 4, x: 0, y: 2)
     }
 }
 
 extension View {
-    func glassPanel(cornerRadius: CGFloat = 14, tint: Color = .clear, stroke: Color = Color.primary.opacity(0.10), hovering: Bool = false) -> some View {
+    func glassPanel(cornerRadius: CGFloat = 10, tint: Color = .clear, stroke: Color = Color.primary.opacity(0.10), hovering: Bool = false) -> some View {
         modifier(GlassPanel(cornerRadius: cornerRadius, tint: tint, stroke: stroke, hovering: hovering))
     }
 }

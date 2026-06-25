@@ -128,41 +128,44 @@ struct AccountCardView: View {
     let account: CodexAccount
     let onSwitchRequest: (CodexAccount) -> Void
     @State private var hovering = false
+    private let activeGreen = Color(red: 0.00, green: 0.62, blue: 0.24)
 
     var body: some View {
         Button {
             guard !account.isActive, !model.isSwitchingAccount else { return }
             onSwitchRequest(account)
         } label: {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 7) {
                 HStack(alignment: .center) {
                     Text(account.isActive ? L.active : L.switchAccount)
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(account.isActive ? Color.white : Color.primary)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
-                        .background(account.isActive ? Color.green : Color.primary.opacity(hovering ? 0.12 : 0.07))
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 4)
+                        .background(account.isActive ? activeGreen : Color.primary.opacity(hovering ? 0.10 : 0.06))
                         .clipShape(Capsule())
                     Spacer()
                     Text(account.label)
-                        .font(.system(size: 19, weight: .semibold, design: .rounded))
-                        .foregroundStyle(account.isActive ? Color.green : Color.secondary)
+                        .font(.system(size: 16, weight: .semibold, design: .rounded))
+                        .foregroundStyle(account.isActive ? activeGreen : Color.secondary)
                 }
 
-                Text(model.compactEmail(account.email))
-                    .font(.system(size: 10, weight: .medium))
+                Text(account.email)
+                    .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+                    .truncationMode(.middle)
 
-                VStack(spacing: 6) {
+                VStack(spacing: 5) {
                     quotaRow(label: "5H", percent: Format.percentRemaining(fromUsed: account.fiveHourUsedPercent), reset: Format.resetTime(from: account.fiveHourUsage))
                     quotaRow(label: "W", percent: Format.percentRemaining(fromUsed: account.weeklyUsedPercent), reset: Format.weeklyResetDate(from: account.weeklyUsage))
                 }
-                .padding(.top, 8)
+                .padding(.top, 7)
             }
-            .padding(12)
-            .frame(maxWidth: .infinity, minHeight: 136, alignment: .topLeading)
+            .padding(11)
+            .frame(maxWidth: .infinity, minHeight: 126, alignment: .topLeading)
             .glassPanel(
+                cornerRadius: 10,
                 tint: accountTint,
                 stroke: accountStroke,
                 hovering: hovering && !account.isActive
@@ -175,34 +178,34 @@ struct AccountCardView: View {
     }
 
     private func quotaRow(label: String, percent: String, reset: String) -> some View {
-        HStack(alignment: .center, spacing: 5) {
+        HStack(alignment: .center, spacing: 4) {
             Text(label)
                 .font(.system(size: 12, weight: .semibold, design: .rounded))
                 .foregroundStyle(.secondary)
-                .frame(width: 22, height: 24, alignment: .leading)
+                .frame(width: 21, height: 22, alignment: .leading)
             Text(percent)
-                .font(.system(size: 18, weight: .semibold, design: .rounded))
-                .foregroundStyle(account.isActive ? Color.green : Color.primary.opacity(0.80))
+                .font(.system(size: 16, weight: .semibold, design: .rounded))
+                .foregroundStyle(account.isActive ? activeGreen : Color.primary.opacity(0.78))
                 .monospacedDigit()
-                .frame(width: 58, height: 24, alignment: .leading)
+                .frame(width: 56, height: 22, alignment: .leading)
             Spacer()
             Text(reset)
                 .font(.system(size: 11, weight: .semibold, design: .rounded))
                 .foregroundStyle(.secondary)
                 .monospacedDigit()
                 .minimumScaleFactor(0.92)
-                .frame(width: 48, height: 24, alignment: .trailing)
+                .frame(width: 48, height: 22, alignment: .trailing)
         }
     }
 
     private var accountStroke: Color {
-        if account.isActive { return Color.green.opacity(0.30) }
-        return Color.primary.opacity(hovering ? 0.22 : 0.08)
+        if account.isActive { return activeGreen.opacity(0.18) }
+        return Color.primary.opacity(hovering ? 0.16 : 0.075)
     }
 
     private var accountTint: Color {
-        if account.isActive { return Color.green.opacity(0.12) }
-        return Color.white.opacity(hovering ? 0.14 : 0.08)
+        if account.isActive { return activeGreen.opacity(0.055) }
+        return Color.white.opacity(hovering ? 0.11 : 0.065)
     }
 }
 
@@ -240,11 +243,12 @@ struct AddAccountCardView: View {
 
                 Spacer(minLength: 0)
             }
-            .padding(12)
-            .frame(maxWidth: .infinity, minHeight: 136, alignment: .topLeading)
+            .padding(11)
+            .frame(maxWidth: .infinity, minHeight: 126, alignment: .topLeading)
             .glassPanel(
-                tint: Color.white.opacity(hovering ? 0.14 : 0.08),
-                stroke: Color.primary.opacity(hovering ? 0.22 : 0.08),
+                cornerRadius: 10,
+                tint: Color.white.opacity(hovering ? 0.11 : 0.065),
+                stroke: Color.primary.opacity(hovering ? 0.16 : 0.075),
                 hovering: hovering
             )
         }

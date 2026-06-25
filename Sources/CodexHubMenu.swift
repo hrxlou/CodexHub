@@ -27,7 +27,7 @@ struct CodexHubMenu: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 12) {
             header
             if panel == .usage {
                 accountGrid
@@ -44,16 +44,12 @@ struct CodexHubMenu: View {
                 footer
             }
         }
-        .padding(16)
-        .frame(width: 400)
+        .padding(15)
+        .frame(width: 392)
         .background(
             ZStack {
                 Rectangle().fill(.ultraThinMaterial)
-                LinearGradient(
-                    colors: [Color.white.opacity(0.20), Color.white.opacity(0.06)],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
+                Color.white.opacity(0.055)
             }
         )
         .onAppear {
@@ -75,14 +71,14 @@ struct CodexHubMenu: View {
     }
 
     private var header: some View {
-        HStack(alignment: .center, spacing: 12) {
+        HStack(alignment: .center, spacing: 11) {
             Image(nsImage: HubImages.appIcon(for: colorScheme))
                 .resizable()
-                .frame(width: 38, height: 38)
-                .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                .frame(width: 32, height: 32)
+                .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
             VStack(alignment: .leading, spacing: 2) {
                 Text("CodexHub")
-                    .font(.system(size: 18, weight: .semibold))
+                    .font(.system(size: 17, weight: .semibold))
             }
             Spacer()
             if panel == .usage {
@@ -110,7 +106,7 @@ struct CodexHubMenu: View {
     }
 
     private var accountGrid: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 7) {
             HStack(alignment: .center) {
                 Text(L.accounts)
                     .font(.system(size: 12, weight: .semibold))
@@ -271,7 +267,7 @@ struct CodexHubMenu: View {
             }
             .padding(.horizontal, 22)
             .padding(.vertical, 18)
-            .glassPanel(cornerRadius: 13, tint: Color.white.opacity(0.10), stroke: Color.primary.opacity(0.10))
+            .glassPanel(cornerRadius: 10, tint: Color.white.opacity(0.08), stroke: Color.primary.opacity(0.09))
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .contentShape(Rectangle())
@@ -321,7 +317,7 @@ struct CodexHubMenu: View {
             }
             .padding(18)
             .frame(width: 300, alignment: .leading)
-            .glassPanel(cornerRadius: 14, tint: Color.white.opacity(0.12), stroke: Color.primary.opacity(0.10))
+            .glassPanel(cornerRadius: 10, tint: Color.white.opacity(0.09), stroke: Color.primary.opacity(0.09))
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .contentShape(Rectangle())
@@ -337,7 +333,7 @@ struct CodexHubMenu: View {
             panel = .costDetails
             model.loadUsageDetails(force: false)
         } label: {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 7) {
                 HStack(alignment: .center) {
                     Text(L.tokenCost)
                         .font(.system(size: 12, weight: .semibold))
@@ -361,8 +357,9 @@ struct CodexHubMenu: View {
                         .foregroundStyle(.secondary)
                     Spacer()
                     Text(Format.summary(model.usage.today))
-                        .font(.system(size: 16, weight: .semibold, design: .rounded))
+                        .font(.system(size: 15, weight: .semibold, design: .rounded))
                         .lineLimit(1)
+                        .minimumScaleFactor(0.86)
                 }
                 Divider().opacity(0.45)
                 metricRow(L.input, value: Format.tokens(model.usage.today.totals.billedInputTokens), cost: Format.money(model.usage.today.costs.inputCost), icon: "tray.and.arrow.down")
@@ -370,12 +367,12 @@ struct CodexHubMenu: View {
                 metricRow(L.output, value: Format.tokens(model.usage.today.totals.outputTokens), cost: Format.money(model.usage.today.costs.outputCost), icon: "arrow.up.right")
                 metricRow(L.reasoning, value: Format.tokens(model.usage.today.totals.reasoningOutputTokens), cost: Format.money(model.usage.today.costs.reasoningCost), icon: "brain.head.profile")
             }
-            .padding(12)
+            .padding(11)
             .frame(maxWidth: .infinity, alignment: .leading)
             .glassPanel(
-                cornerRadius: 13,
-                tint: Color.white.opacity(tokenCostHover ? 0.12 : 0.08),
-                stroke: Color.primary.opacity(tokenCostHover ? 0.16 : 0.08),
+                cornerRadius: 10,
+                tint: Color.white.opacity(tokenCostHover ? 0.10 : 0.065),
+                stroke: Color.primary.opacity(tokenCostHover ? 0.13 : 0.075),
                 hovering: tokenCostHover
             )
         }
@@ -496,14 +493,14 @@ struct CodexHubMenu: View {
                     .lineLimit(1)
             } else {
                 Text(Format.relative(model.lastRefreshDate))
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(.secondary)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(Color.secondary.opacity(0.88))
             }
             Spacer()
             RefreshButton(isRefreshing: model.isRefreshing) {
                 model.refresh(force: true)
             }
-            HubActionButton(title: L.quit, systemImage: "power", tone: .danger) {
+            HubActionButton(title: L.quit, systemImage: "power", tone: .danger, compact: true) {
                 NSApp.terminate(nil)
             }
         }
@@ -687,9 +684,9 @@ struct CodexHubMenu: View {
                 .foregroundStyle(.secondary)
             content()
         }
-        .padding(12)
+        .padding(11)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .glassPanel(cornerRadius: 13, tint: Color.white.opacity(0.08), stroke: Color.primary.opacity(0.08))
+        .glassPanel(cornerRadius: 10, tint: Color.white.opacity(0.065), stroke: Color.primary.opacity(0.075))
     }
 
     private func tokenCostSummaryCard(_ details: UsageDetailSnapshot) -> some View {
@@ -708,9 +705,9 @@ struct CodexHubMenu: View {
             detailSummaryRow(L.thisWeek, aggregate: details.week)
             detailSummaryRow(L.thisMonth, aggregate: details.month)
         }
-        .padding(12)
+        .padding(11)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .glassPanel(cornerRadius: 13, tint: Color.white.opacity(0.08), stroke: Color.primary.opacity(0.08))
+        .glassPanel(cornerRadius: 10, tint: Color.white.opacity(0.065), stroke: Color.primary.opacity(0.075))
     }
 
     private func accountUsageSection(title: String, usage: [String: UsageAggregate], maxRows: Int? = nil) -> some View {
@@ -752,14 +749,16 @@ struct CodexHubMenu: View {
     private func metricRow(_ label: String, value: String, cost: String, icon: String) -> some View {
         HStack(spacing: 8) {
             Image(systemName: icon)
+                .font(.system(size: 12, weight: .medium))
                 .frame(width: 18)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color.secondary.opacity(0.72))
             Text(label)
             Spacer()
             Text("\(value) · \(cost)")
                 .fontWeight(.semibold)
+                .monospacedDigit()
         }
-        .font(.system(size: 12))
+        .font(.system(size: 11))
     }
 
     private func detailSummaryRow(_ label: String, aggregate: UsageAggregate) -> some View {
