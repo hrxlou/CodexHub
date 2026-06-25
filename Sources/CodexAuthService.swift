@@ -33,7 +33,8 @@ final class CodexAuthService {
     func listAccounts(useAPI: Bool) -> (accounts: [CodexAccount], error: String?, quotaAPIStatus: QuotaAPIStatus, autoDisabledAPI: Bool) {
         let loaded = accountStore.loadAccounts()
         guard useAPI else {
-            return (loaded.accounts, loaded.error, .off, false)
+            let local = applyLocalRateLimitsIfUseful(loaded.accounts)
+            return (local.accounts, loaded.error, local.usedLocalState ? .fallback : .off, false)
         }
         let lookup = applyAppServerRateLimitsIfUseful(loaded.accounts)
         let status: QuotaAPIStatus = lookup.usedLiveAppServer ? .on : (lookup.usedFallback ? .fallback : .failed)
@@ -73,7 +74,20 @@ final class CodexAuthService {
             return (updated, !lookup.fromCache, lookup.fromCache)
         }
 
-        return (accounts, false, false)
+        let local = applyLocalRateLimitsIfUseful(accounts)
+        return (local.accounts, false, local.usedLocalState)
+    }
+
+    private func applyLocalRateLimitsIfUseful(_ accounts: [CodexAccount]) -> (accounts: [CodexAccount], usedLocalState: Bool) {
+        guard let active = accounts.first(where: { $0.isActive }),
+              let lookup = readActiveRateLimitsFromLocalSessions(since: active.lastUsedAt) else {
+            return (accounts, false)
+        }
+        accountStore.updateStoredUsage(identity: active.identity, limits: lookup.limits)
+        let updated = accounts.map { account in
+            account.isActive ? account.applyingAppServerRateLimits(lookup.limits) : account
+        }
+        return (updated, true)
     }
 
     private func saveActiveUsageSnapshotIfPossible() {
@@ -131,10 +145,37 @@ final class CodexAuthService {
         let limits: AppServerRateLimits
     }
 
+    private struct LocalSessionRateLimitEvent: Decodable {
+        let type: String
+        let payload: Payload?
+
+        struct Payload: Decodable {
+            let type: String?
+            let rateLimits: LocalSessionRateLimits?
+
+            enum CodingKeys: String, CodingKey {
+                case type
+                case rateLimits = "rate_limits"
+            }
+        }
+    }
+
+    private struct LocalSessionRateLimits: Decodable {
+        let limitId: String?
+        let primary: AppServerRateLimitWindowPayload?
+        let secondary: AppServerRateLimitWindowPayload?
+
+        enum CodingKeys: String, CodingKey {
+            case limitId = "limit_id"
+            case primary
+            case secondary
+        }
+    }
+
     private func readActiveRateLimitsFromCodexAppServer(accountIdentity: String) -> AppServerLookup? {
         guard let codexPath = codexCLIPath() else { return nil }
-        let request1 = #"{"id":1,"method":"initialize","params":{"clientInfo":{"name":"codexhub","title":"CodexHub","version":"1"},"capabilities":{"experimentalApi":true,"requestAttestation":false,"optOutNotificationMethods":[]}}}"#
-        let request2 = #"{"id":2,"method":"account/rateLimits/read"}"#
+        let request1 = #"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"clientInfo":{"name":"codexhub","title":"CodexHub","version":"1"},"capabilities":{"experimentalApi":true,"requestAttestation":false,"optOutNotificationMethods":[]}}}"#
+        let request2 = #"{"jsonrpc":"2.0","id":2,"method":"account/rateLimits/read"}"#
 
         let process = Process()
         let stdout = Pipe()
@@ -184,8 +225,8 @@ final class CodexAuthService {
             if let data = payload.data(using: .utf8) {
                 stdin.fileHandleForWriting.write(data)
             }
-            try? stdin.fileHandleForWriting.close()
             let timedOut = completed.wait(timeout: .now() + 4) == .timedOut
+            try? stdin.fileHandleForWriting.close()
             if process.isRunning {
                 process.terminate()
                 if exited.wait(timeout: .now() + 1) == .timedOut, process.isRunning {
@@ -207,6 +248,59 @@ final class CodexAuthService {
             stderr.fileHandleForReading.readabilityHandler = nil
             return loadAppServerCache(accountIdentity: accountIdentity).map { AppServerLookup(limits: $0, fromCache: true) }
         }
+    }
+
+    private func readActiveRateLimitsFromLocalSessions(since: Date?) -> AppServerLookup? {
+        guard let since else { return nil }
+        let root = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".codex", isDirectory: true)
+            .appendingPathComponent("sessions", isDirectory: true)
+        guard FileManager.default.fileExists(atPath: root.path) else { return nil }
+        let candidates = recentSessionFiles(in: root, modifiedAfter: since)
+        let decoder = JSONDecoder()
+        for file in candidates {
+            guard let data = try? Data(contentsOf: file),
+                  let text = String(data: data, encoding: .utf8) else { continue }
+            for line in text.split(separator: "\n", omittingEmptySubsequences: true).reversed() {
+                guard line.contains(#""rate_limits""#),
+                      line.contains(#""token_count""#),
+                      let lineData = String(line).data(using: .utf8),
+                      let event = try? decoder.decode(LocalSessionRateLimitEvent.self, from: lineData),
+                      event.type == "event_msg",
+                      event.payload?.type == "token_count",
+                      let snapshot = event.payload?.rateLimits,
+                      snapshot.limitId == nil || snapshot.limitId == "codex",
+                      snapshot.primary != nil || snapshot.secondary != nil else { continue }
+                return AppServerLookup(
+                    limits: AppServerRateLimits(
+                        primary: snapshot.primary.map(makeAppServerWindow),
+                        secondary: snapshot.secondary.map(makeAppServerWindow)
+                    ),
+                    fromCache: true
+                )
+            }
+        }
+        return nil
+    }
+
+    private func recentSessionFiles(in root: URL, modifiedAfter lowerBound: Date) -> [URL] {
+        guard let enumerator = FileManager.default.enumerator(
+            at: root,
+            includingPropertiesForKeys: [.isRegularFileKey, .contentModificationDateKey],
+            options: [.skipsHiddenFiles]
+        ) else { return [] }
+        var files: [(url: URL, modifiedAt: Date)] = []
+        for case let url as URL in enumerator where url.pathExtension == "jsonl" {
+            guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .contentModificationDateKey]),
+                  values.isRegularFile == true,
+                  let modifiedAt = values.contentModificationDate,
+                  modifiedAt >= lowerBound else { continue }
+            files.append((url, modifiedAt))
+        }
+        return files
+            .sorted { $0.modifiedAt > $1.modifiedAt }
+            .prefix(30)
+            .map(\.url)
     }
 
     private func parseAppServerRateLimitsLine(_ line: String) -> AppServerRateLimits? {
