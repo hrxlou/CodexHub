@@ -74,7 +74,8 @@ final class CodexAuthService {
             || active.weeklyUsedPercent == nil
             || active.weeklyUsage == "-"
             || active.weeklyUsage == "Unavailable"
-        guard let lookup = readActiveRateLimitsFromCodexAppServer() else {
+        guard let lookup = readActiveRateLimitsFromCodexAppServer(accountIdentity: active.identity)
+            ?? readActiveRateLimitsFromLocalSessions(since: active.lastUsedAt) else {
             guard needsFallback else { return (accounts, false, nil) }
             let updated = accounts.map { account in
                 account.isActive ? account.withUnavailableRateLimitsIfNeeded() : account
@@ -109,6 +110,21 @@ final class CodexAuthService {
     private struct AppServerRateLimitWindowPayload: Decodable {
         let usedPercent: Double
         let resetsAt: Double?
+
+        enum CodingKeys: String, CodingKey {
+            case usedPercent
+            case resetsAt
+            case usedPercentSnake = "used_percent"
+            case resetsAtSnake = "resets_at"
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            usedPercent = try container.decodeIfPresent(Double.self, forKey: .usedPercent)
+                ?? container.decode(Double.self, forKey: .usedPercentSnake)
+            resetsAt = try container.decodeIfPresent(Double.self, forKey: .resetsAt)
+                ?? container.decodeIfPresent(Double.self, forKey: .resetsAtSnake)
+        }
     }
 
     private struct AppServerLookup {
@@ -117,11 +133,40 @@ final class CodexAuthService {
     }
 
     private struct AppServerQuotaCache: Codable {
+        let accountIdentity: String?
         let savedAt: Date
         let limits: AppServerRateLimits
     }
 
-    private func readActiveRateLimitsFromCodexAppServer() -> AppServerLookup? {
+    private struct LocalSessionRateLimitEvent: Decodable {
+        let timestamp: String?
+        let type: String
+        let payload: Payload?
+
+        struct Payload: Decodable {
+            let type: String?
+            let rateLimits: LocalSessionRateLimits?
+
+            enum CodingKeys: String, CodingKey {
+                case type
+                case rateLimits = "rate_limits"
+            }
+        }
+    }
+
+    private struct LocalSessionRateLimits: Decodable {
+        let limitId: String?
+        let primary: AppServerRateLimitWindowPayload?
+        let secondary: AppServerRateLimitWindowPayload?
+
+        enum CodingKeys: String, CodingKey {
+            case limitId = "limit_id"
+            case primary
+            case secondary
+        }
+    }
+
+    private func readActiveRateLimitsFromCodexAppServer(accountIdentity: String) -> AppServerLookup? {
         guard let codexPath = codexCLIPath() else { return nil }
         let request1 = #"{"id":1,"method":"initialize","params":{"clientInfo":{"name":"codexhub","title":"CodexHub","version":"1"},"capabilities":{"experimentalApi":true,"requestAttestation":false,"optOutNotificationMethods":[]}}}"#
         let request2 = #"{"id":2,"method":"account/rateLimits/read"}"#
@@ -188,15 +233,68 @@ final class CodexAuthService {
             stdout.fileHandleForReading.readabilityHandler = nil
             stderr.fileHandleForReading.readabilityHandler = nil
             if !timedOut, let resolvedLimits {
-                saveAppServerCache(resolvedLimits)
+                saveAppServerCache(resolvedLimits, accountIdentity: accountIdentity)
                 return AppServerLookup(limits: resolvedLimits, fromCache: false)
             }
-            return loadAppServerCache().map { AppServerLookup(limits: $0, fromCache: true) }
+            return loadAppServerCache(accountIdentity: accountIdentity).map { AppServerLookup(limits: $0, fromCache: true) }
         } catch {
             stdout.fileHandleForReading.readabilityHandler = nil
             stderr.fileHandleForReading.readabilityHandler = nil
-            return loadAppServerCache().map { AppServerLookup(limits: $0, fromCache: true) }
+            return loadAppServerCache(accountIdentity: accountIdentity).map { AppServerLookup(limits: $0, fromCache: true) }
         }
+    }
+
+    private func readActiveRateLimitsFromLocalSessions(since: Date?) -> AppServerLookup? {
+        let root = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".codex", isDirectory: true)
+            .appendingPathComponent("sessions", isDirectory: true)
+        guard FileManager.default.fileExists(atPath: root.path) else { return nil }
+        let lowerBound = since?.addingTimeInterval(-3600)
+        let candidates = recentSessionFiles(in: root, modifiedAfter: lowerBound)
+        let decoder = JSONDecoder()
+        for file in candidates {
+            guard let data = try? Data(contentsOf: file),
+                  let text = String(data: data, encoding: .utf8) else { continue }
+            for line in text.split(separator: "\n", omittingEmptySubsequences: true).reversed() {
+                guard line.contains(#""rate_limits""#),
+                      line.contains(#""token_count""#),
+                      let lineData = String(line).data(using: .utf8),
+                      let event = try? decoder.decode(LocalSessionRateLimitEvent.self, from: lineData),
+                      event.type == "event_msg",
+                      event.payload?.type == "token_count",
+                      let snapshot = event.payload?.rateLimits,
+                      snapshot.limitId == nil || snapshot.limitId == "codex",
+                      snapshot.primary != nil || snapshot.secondary != nil else { continue }
+                return AppServerLookup(
+                    limits: AppServerRateLimits(
+                        primary: snapshot.primary.map(makeAppServerWindow),
+                        secondary: snapshot.secondary.map(makeAppServerWindow)
+                    ),
+                    fromCache: true
+                )
+            }
+        }
+        return nil
+    }
+
+    private func recentSessionFiles(in root: URL, modifiedAfter lowerBound: Date?) -> [URL] {
+        guard let enumerator = FileManager.default.enumerator(
+            at: root,
+            includingPropertiesForKeys: [.isRegularFileKey, .contentModificationDateKey],
+            options: [.skipsHiddenFiles]
+        ) else { return [] }
+        var files: [(url: URL, modifiedAt: Date)] = []
+        for case let url as URL in enumerator where url.pathExtension == "jsonl" {
+            guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .contentModificationDateKey]),
+                  values.isRegularFile == true,
+                  let modifiedAt = values.contentModificationDate else { continue }
+            if let lowerBound, modifiedAt < lowerBound { continue }
+            files.append((url, modifiedAt))
+        }
+        return files
+            .sorted { $0.modifiedAt > $1.modifiedAt }
+            .prefix(30)
+            .map(\.url)
     }
 
     private func parseAppServerRateLimitsLine(_ line: String) -> AppServerRateLimits? {
@@ -212,15 +310,16 @@ final class CodexAuthService {
         )
     }
 
-    private func loadAppServerCache() -> AppServerRateLimits? {
+    private func loadAppServerCache(accountIdentity: String) -> AppServerRateLimits? {
         guard let data = try? Data(contentsOf: appServerCacheURL),
               let cache = try? JSONDecoder.codexHub.decode(AppServerQuotaCache.self, from: data),
+              cache.accountIdentity == accountIdentity,
               Date().timeIntervalSince(cache.savedAt) < 900 else { return nil }
         return cache.limits
     }
 
-    private func saveAppServerCache(_ limits: AppServerRateLimits) {
-        let cache = AppServerQuotaCache(savedAt: Date(), limits: limits)
+    private func saveAppServerCache(_ limits: AppServerRateLimits, accountIdentity: String) {
+        let cache = AppServerQuotaCache(accountIdentity: accountIdentity, savedAt: Date(), limits: limits)
         guard let data = try? JSONEncoder.codexHub.encode(cache) else { return }
         try? data.write(to: appServerCacheURL, options: .atomic)
     }

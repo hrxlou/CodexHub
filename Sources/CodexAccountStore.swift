@@ -49,6 +49,7 @@ final class CodexAccountStore {
             }
             return AccountLoadResult(accounts: [], error: L.text(ko: "저장된 Codex 계정이 없습니다", en: "No stored Codex accounts found"))
         }
+        try? syncCurrentLoginMetadataLocked()
         return loadAccountsFromRegistryLocked()
     }
 
@@ -238,6 +239,7 @@ final class CodexAccountStore {
         account["plan"] = info.plan ?? account["plan"] ?? "unknown"
         account["auth_mode"] = info.authMode ?? account["auth_mode"] ?? "chatgpt"
         account["created_at"] = account["created_at"] ?? nowSeconds
+        account["last_used_at"] = nowSeconds
         if existingIndex == nil {
             accounts.append(account)
         } else if let existingIndex {
@@ -248,6 +250,51 @@ final class CodexAccountStore {
         registry["active_account_activated_at_ms"] = Int(Date().timeIntervalSince1970 * 1000)
         try writeRegistryLocked(registry)
         return true
+    }
+
+    private func syncCurrentLoginMetadataLocked() throws {
+        guard fileManager.fileExists(atPath: authURL.path) else { return }
+        let info = extractAuthInfo(from: authURL)
+        guard let identity = info.identity else { return }
+        var registry = try readRegistryLocked()
+        guard var accounts = registry["accounts"] as? [[String: Any]],
+              let existingIndex = accounts.firstIndex(where: { ($0["account_key"] as? String) == identity }) else {
+            return
+        }
+        var account = accounts[existingIndex]
+        let nowSeconds = Int(Date().timeIntervalSince1970)
+        var changed = false
+
+        func setIfChanged(_ key: String, _ value: Any?) {
+            guard let value else { return }
+            if "\(account[key] ?? "")" != "\(value)" {
+                account[key] = value
+                changed = true
+            }
+        }
+
+        setIfChanged("chatgpt_account_id", info.accountID)
+        setIfChanged("chatgpt_user_id", info.userID)
+        setIfChanged("email", info.email)
+        setIfChanged("account_name", info.name)
+        setIfChanged("plan", info.plan ?? account["plan"] ?? "unknown")
+        setIfChanged("auth_mode", info.authMode ?? account["auth_mode"] ?? "chatgpt")
+        if account["last_used_at"] == nil {
+            account["last_used_at"] = nowSeconds
+            changed = true
+        }
+        if (registry["active_account_key"] as? String) != identity {
+            registry["active_account_key"] = identity
+            registry["active_account_activated_at_ms"] = Int(Date().timeIntervalSince1970 * 1000)
+            changed = true
+        } else if registry["active_account_activated_at_ms"] == nil {
+            registry["active_account_activated_at_ms"] = Int(Date().timeIntervalSince1970 * 1000)
+            changed = true
+        }
+        guard changed else { return }
+        accounts[existingIndex] = account
+        registry["accounts"] = accounts
+        try writeRegistryLocked(registry)
     }
 
     private func extractAuthInfo(from url: URL) -> AuthInfo {

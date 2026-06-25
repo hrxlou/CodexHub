@@ -165,6 +165,9 @@ final class CodexHubModel: ObservableObject {
                 self.isRefreshing = false
                 if login.status == 0 && capture.status == 0 {
                     self.settings.statusMessage = L.accountSaved
+                    DispatchQueue.global(qos: .utility).async {
+                        _ = self.authService.restartCodex()
+                    }
                     self.refresh(force: true)
                 } else {
                     let message = capture.output.trimmingCharacters(in: .whitespacesAndNewlines)
