@@ -8,6 +8,7 @@ struct CodexHubMenu: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var panel: HubPanel = .usage
     @State private var tokenCostHover = false
+    @State private var pendingRemoveAccountIdentity: String?
 
     init(model: CodexHubModel) {
         self.model = model
@@ -156,61 +157,76 @@ struct CodexHubMenu: View {
     }
 
     private func accountManagementRow(_ account: CodexAccount) -> some View {
-        HStack(alignment: .center, spacing: 10) {
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 6) {
-                    Text(account.label)
-                        .font(.system(size: 12, weight: .semibold))
-                        .lineLimit(1)
-                    if account.isActive {
-                        Text(L.active)
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 7)
-                            .padding(.vertical, 3)
-                            .background(Color.green)
-                            .clipShape(Capsule())
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(alignment: .center, spacing: 10) {
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 6) {
+                        Text(account.label)
+                            .font(.system(size: 12, weight: .semibold))
+                            .lineLimit(1)
+                        if account.isActive {
+                            Text(L.active)
+                                .font(.system(size: 9, weight: .bold))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 3)
+                                .background(Color.green)
+                                .clipShape(Capsule())
+                        }
                     }
-                }
-                Text(account.email)
+                    Text(account.email)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    HStack(spacing: 8) {
+                        Text(account.plan)
+                        Text(account.lastActivity)
+                    }
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
-                    .truncationMode(.middle)
-                HStack(spacing: 8) {
-                    Text(account.plan)
-                    Text(account.lastActivity)
                 }
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
+                Spacer()
+                if !account.isActive {
+                    HubActionButton(
+                        title: model.removingAccountIdentity == account.identity ? L.removing : L.removeAccount,
+                        systemImage: "trash",
+                        tone: .danger,
+                        compact: true
+                    ) {
+                        pendingRemoveAccountIdentity = account.identity
+                    }
+                    .disabled(model.removingAccountIdentity != nil)
+                    .help(L.removeAccount)
+                }
             }
-            Spacer()
-            HubActionButton(
-                title: model.removingAccountIdentity == account.identity ? L.removing : L.removeAccount,
-                systemImage: "trash",
-                tone: .danger,
-                compact: true
-            ) {
-                confirmRemoveAccount(account)
+
+            if pendingRemoveAccountIdentity == account.identity {
+                removeConfirmationRow(account)
             }
-            .disabled(account.isActive || model.removingAccountIdentity != nil)
-            .help(account.isActive ? L.activeAccountCannotBeRemoved : L.removeAccount)
         }
     }
 
-    private func confirmRemoveAccount(_ account: CodexAccount) {
-        guard !account.isActive else { return }
-        let alert = NSAlert()
-        alert.alertStyle = .warning
-        alert.messageText = L.removeAccount
-        alert.informativeText = L.removeAccountMessage(account.email)
-        alert.addButton(withTitle: L.removeAccount)
-        alert.addButton(withTitle: L.notNow)
-        NSApp.activate(ignoringOtherApps: true)
-        if alert.runModal() == .alertFirstButtonReturn {
-            model.removeAccount(account.identity)
+    private func removeConfirmationRow(_ account: CodexAccount) -> some View {
+        HStack(alignment: .center, spacing: 8) {
+            Text(L.removeAccountMessage(account.email))
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+            Spacer(minLength: 8)
+            HubActionButton(title: L.notNow, systemImage: "xmark", compact: true, titleOnly: true) {
+                pendingRemoveAccountIdentity = nil
+            }
+            HubActionButton(title: L.removeAccount, systemImage: "trash", tone: .danger, compact: true, titleOnly: true) {
+                pendingRemoveAccountIdentity = nil
+                model.removeAccount(account.identity)
+            }
+            .disabled(model.removingAccountIdentity != nil)
         }
+        .padding(8)
+        .background(Color.primary.opacity(0.045))
+        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
     }
 
     private var accountColumns: [GridItem] {
