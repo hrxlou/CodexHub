@@ -65,17 +65,34 @@ final class CodexAuthService {
     }
 
     private func applyAppServerRateLimitsIfUseful(_ accounts: [CodexAccount]) -> (accounts: [CodexAccount], usedLiveAppServer: Bool, usedFallback: Bool) {
-        guard let active = accounts.first(where: { $0.isActive }) else { return (accounts, false, false) }
-        if let lookup = readActiveRateLimitsFromCodexAppServer(accountIdentity: active.identity) {
-            accountStore.updateStoredUsage(identity: active.identity, limits: lookup.limits)
-            let updated = accounts.map { account in
-                account.isActive ? account.applyingAppServerRateLimits(lookup.limits) : account
+        var limitsByIdentity: [String: AppServerLookup] = [:]
+        var usedLiveAppServer = false
+        var usedFallback = false
+
+        for account in accounts {
+            let lookup = account.isActive
+                ? readRateLimitsFromCodexAppServer(accountIdentity: account.identity)
+                : readRateLimitsFromStoredAccountSnapshot(accountIdentity: account.identity)
+            guard let lookup else { continue }
+            limitsByIdentity[account.identity] = lookup
+            accountStore.updateStoredUsage(identity: account.identity, limits: lookup.limits)
+            if lookup.fromCache {
+                usedFallback = true
+            } else {
+                usedLiveAppServer = true
             }
-            return (updated, !lookup.fromCache, lookup.fromCache)
         }
 
-        let local = applyLocalRateLimitsIfUseful(accounts)
-        return (local.accounts, false, local.usedLocalState)
+        guard limitsByIdentity.isEmpty == false else {
+            let local = applyLocalRateLimitsIfUseful(accounts)
+            return (local.accounts, false, local.usedLocalState)
+        }
+
+        let updated = accounts.map { account in
+            guard let lookup = limitsByIdentity[account.identity] else { return account }
+            return account.applyingAppServerRateLimits(lookup.limits)
+        }
+        return (updated, usedLiveAppServer, usedFallback)
     }
 
     private func applyLocalRateLimitsIfUseful(_ accounts: [CodexAccount]) -> (accounts: [CodexAccount], usedLocalState: Bool) {
@@ -93,7 +110,7 @@ final class CodexAuthService {
     private func saveActiveUsageSnapshotIfPossible() {
         let loaded = accountStore.loadAccounts()
         guard let active = loaded.accounts.first(where: { $0.isActive }),
-              let lookup = readActiveRateLimitsFromCodexAppServer(accountIdentity: active.identity) else {
+              let lookup = readRateLimitsFromCodexAppServer(accountIdentity: active.identity) else {
             return
         }
         accountStore.updateStoredUsage(identity: active.identity, limits: lookup.limits)
@@ -172,7 +189,21 @@ final class CodexAuthService {
         }
     }
 
-    private func readActiveRateLimitsFromCodexAppServer(accountIdentity: String) -> AppServerLookup? {
+    private func readRateLimitsFromStoredAccountSnapshot(accountIdentity: String) -> AppServerLookup? {
+        guard let temporaryCodexHome = accountStore.makeTemporaryCodexHome(for: accountIdentity) else {
+            return nil
+        }
+        defer {
+            try? FileManager.default.removeItem(at: temporaryCodexHome)
+        }
+        let lookup = readRateLimitsFromCodexAppServer(accountIdentity: accountIdentity, codexHome: temporaryCodexHome)
+        if lookup?.fromCache == false {
+            accountStore.updateStoredAuthSnapshot(identity: accountIdentity, fromTemporaryCodexHome: temporaryCodexHome)
+        }
+        return lookup
+    }
+
+    private func readRateLimitsFromCodexAppServer(accountIdentity: String, codexHome: URL? = nil) -> AppServerLookup? {
         guard let codexPath = codexCLIPath() else { return nil }
         let request1 = #"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"clientInfo":{"name":"codexhub","title":"CodexHub","version":"1"},"capabilities":{"experimentalApi":true,"requestAttestation":false,"optOutNotificationMethods":[]}}}"#
         let request2 = #"{"jsonrpc":"2.0","id":2,"method":"account/rateLimits/read"}"#
@@ -186,7 +217,11 @@ final class CodexAuthService {
         process.standardInput = stdin
         process.standardOutput = stdout
         process.standardError = stderr
-        process.environment = processEnvironment(prependingExecutableDirectory: codexPath)
+        var environment = processEnvironment(prependingExecutableDirectory: codexPath)
+        if let codexHome {
+            environment["CODEX_HOME"] = codexHome.path
+        }
+        process.environment = environment
 
         let lock = NSLock()
         let completed = DispatchSemaphore(value: 0)

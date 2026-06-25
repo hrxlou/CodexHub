@@ -171,6 +171,45 @@ final class CodexAccountStore {
         }
     }
 
+    func makeTemporaryCodexHome(for identity: String) -> URL? {
+        lock.lock()
+        defer { lock.unlock() }
+        let snapshotURL = authSnapshotURL(for: identity)
+        guard fileManager.fileExists(atPath: snapshotURL.path) else { return nil }
+        let temporaryRoot = fileManager.temporaryDirectory
+            .appendingPathComponent("CodexHub-CodexHome-\(UUID().uuidString)", isDirectory: true)
+        do {
+            try fileManager.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+            let temporaryAuthURL = temporaryRoot.appendingPathComponent("auth.json")
+            try fileManager.copyItem(at: snapshotURL, to: temporaryAuthURL)
+            try setPrivatePermissions(temporaryAuthURL)
+            return temporaryRoot
+        } catch {
+            try? fileManager.removeItem(at: temporaryRoot)
+            return nil
+        }
+    }
+
+    func updateStoredAuthSnapshot(identity: String, fromTemporaryCodexHome temporaryCodexHome: URL) {
+        lock.lock()
+        defer { lock.unlock() }
+        let temporaryAuthURL = temporaryCodexHome.appendingPathComponent("auth.json")
+        guard fileManager.fileExists(atPath: temporaryAuthURL.path),
+              extractAuthInfo(from: temporaryAuthURL).identity == identity else {
+            return
+        }
+        do {
+            let snapshotURL = authSnapshotURL(for: identity)
+            if fileManager.fileExists(atPath: snapshotURL.path) {
+                backupFileIfPresent(snapshotURL, prefix: nil)
+            }
+            try replaceFile(at: snapshotURL, withContentsOf: temporaryAuthURL)
+            try setPrivatePermissions(snapshotURL)
+        } catch {
+            return
+        }
+    }
+
     private func loadAccountsFromRegistryLocked() -> AccountLoadResult {
         do {
             let registry = try readRegistryLocked()
