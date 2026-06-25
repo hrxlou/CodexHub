@@ -116,6 +116,7 @@ private struct UsageAttribution {
 }
 
 final class TokenUsageScanner {
+    private let accountStore: CodexAccountStore
     private let pricingCatalog = ModelPricingCatalog.load()
     private let decoder = JSONDecoder()
     private let fileManager = FileManager.default
@@ -126,9 +127,7 @@ final class TokenUsageScanner {
         return encoder
     }()
     private let cacheURL: URL = {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-            .appendingPathComponent("CodexHub", isDirectory: true)
-        try? FileManager.default.createDirectory(at: appSupport, withIntermediateDirectories: true)
+        let appSupport = LocalStorageSecurity.codexHubApplicationSupportDirectory()
         return appSupport.appendingPathComponent("usage-ledger-v2.json")
     }()
     private let isoFormatter: ISO8601DateFormatter = {
@@ -136,6 +135,18 @@ final class TokenUsageScanner {
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         return formatter
     }()
+    private let isoFormatterWithoutFractionalSeconds: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter
+    }()
+
+    init(accountStore: CodexAccountStore = CodexAccountStore()) {
+        self.accountStore = accountStore
+        if fileManager.fileExists(atPath: cacheURL.path) {
+            try? LocalStorageSecurity.setPrivateFilePermissions(cacheURL)
+        }
+    }
 
     func scan(attribution: AttributionStore, accounts: [CodexAccount]) -> UsageSnapshot {
         scanQueue.sync {
@@ -206,12 +217,11 @@ final class TokenUsageScanner {
         rollupMode: RollupMode,
         progress: ((UsageScanProgress) -> Void)? = nil
     ) -> Result<UsageRollup, UsageScanFailure> {
-        let root = fileManager.homeDirectoryForCurrentUser
-            .appendingPathComponent(".codex", isDirectory: true)
+        let root = accountStore.resolvedCodexHome()
             .appendingPathComponent("sessions", isDirectory: true)
 
         guard fileManager.fileExists(atPath: root.path) else {
-            return .failure(UsageScanFailure(message: L.text(ko: "~/.codex/sessions를 찾을 수 없습니다", en: "~/.codex/sessions not found")))
+            return .failure(UsageScanFailure(message: L.text(ko: "\(root.path)를 찾을 수 없습니다", en: "\(root.path) not found")))
         }
 
         let calendar = Calendar.current
@@ -373,14 +383,14 @@ final class TokenUsageScanner {
             }
             carry = lineStart < buffer.endIndex ? Data(buffer[lineStart..<buffer.endIndex]) : Data()
         }
-        if carry.isEmpty == false, processLine(carry, calendar: calendar, state: &state) {
+        if carry.isEmpty == false, processLine(carry, calendar: calendar, state: &state, isCompleteLine: false) {
             consumed += UInt64(carry.count)
         }
         return consumed
     }
 
-    private func processLine(_ line: Data, calendar: Calendar, state: inout RunningParseState) -> Bool {
-        guard lineContains(line, #""token_count""#) || lineContains(line, #""turn_context""#) else { return true }
+    private func processLine(_ line: Data, calendar: Calendar, state: inout RunningParseState, isCompleteLine: Bool = true) -> Bool {
+        guard lineContains(line, #""token_count""#) || lineContains(line, #""turn_context""#) else { return isCompleteLine }
         guard let event = try? decoder.decode(CodexSessionEvent.self, from: line) else { return false }
 
         if event.type == "turn_context" {
@@ -392,7 +402,7 @@ final class TokenUsageScanner {
 
         guard event.type == "event_msg", event.payload?.type == "token_count" else { return true }
         guard let timestamp = event.timestamp,
-              let eventDate = isoFormatter.date(from: timestamp) else { return true }
+              let eventDate = parseTimestamp(timestamp) else { return true }
 
         let cumulative = event.payload?.info?.totalTokenUsage
         let lastTurn = event.payload?.info?.lastTokenUsage
@@ -487,6 +497,10 @@ final class TokenUsageScanner {
         return UsageAggregate(totals: totals, costs: CostTotals(totals: totals, rates: rates))
     }
 
+    private func parseTimestamp(_ timestamp: String) -> Date? {
+        isoFormatter.date(from: timestamp) ?? isoFormatterWithoutFractionalSeconds.date(from: timestamp)
+    }
+
     private func recentCalendarDays(
         from rows: [(Date, UsageAggregate)],
         endingAt todayStart: Date,
@@ -575,14 +589,11 @@ final class TokenUsageScanner {
 
     private func saveLedger(_ ledger: UsageLedger) {
         guard let data = try? ledgerEncoder.encode(ledger) else { return }
-        try? data.write(to: cacheURL, options: .atomic)
+        try? LocalStorageSecurity.writePrivateFileAtomically(data, to: cacheURL)
     }
 
     private func historicalAccountEmail(from accounts: [CodexAccount]) -> String? {
-        accounts.first { account in
-            let email = account.email.lowercased()
-            return email.hasPrefix("n") || email.contains("snu")
-        }?.email ?? accounts.first?.email
+        accounts.first?.email
     }
 
     private func pruneExpiredRecords(_ ledger: inout UsageLedger, retentionStart: Date) -> Bool {

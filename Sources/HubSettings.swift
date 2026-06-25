@@ -56,7 +56,14 @@ final class HubSettings: ObservableObject {
     }
 
     @Published var reminderThreshold: Int {
-        didSet { defaults.set(reminderThreshold, forKey: Keys.reminderThreshold) }
+        didSet {
+            let clamped = Self.clampThreshold(reminderThreshold)
+            if reminderThreshold != clamped {
+                reminderThreshold = clamped
+                return
+            }
+            defaults.set(clamped, forKey: Keys.reminderThreshold)
+        }
     }
 
     @Published var autoSwitchEnabled: Bool {
@@ -64,7 +71,14 @@ final class HubSettings: ObservableObject {
     }
 
     @Published var autoSwitchThreshold: Int {
-        didSet { defaults.set(autoSwitchThreshold, forKey: Keys.autoSwitchThreshold) }
+        didSet {
+            let clamped = Self.clampThreshold(autoSwitchThreshold)
+            if autoSwitchThreshold != clamped {
+                autoSwitchThreshold = clamped
+                return
+            }
+            defaults.set(clamped, forKey: Keys.autoSwitchThreshold)
+        }
     }
 
     @Published var quotaAPIEnabled: Bool {
@@ -80,11 +94,15 @@ final class HubSettings: ObservableObject {
     init() {
         launchAtLogin = defaults.object(forKey: Keys.launchAtLogin) as? Bool ?? false
         usageReminderEnabled = defaults.object(forKey: Keys.usageReminderEnabled) as? Bool ?? false
-        reminderThreshold = defaults.object(forKey: Keys.reminderThreshold) as? Int ?? 10
+        reminderThreshold = Self.clampThreshold(defaults.object(forKey: Keys.reminderThreshold) as? Int ?? 10)
         autoSwitchEnabled = defaults.object(forKey: Keys.autoSwitchEnabled) as? Bool ?? false
-        autoSwitchThreshold = defaults.object(forKey: Keys.autoSwitchThreshold) as? Int ?? 10
+        autoSwitchThreshold = Self.clampThreshold(defaults.object(forKey: Keys.autoSwitchThreshold) as? Int ?? 10)
         quotaAPIEnabled = defaults.object(forKey: Keys.quotaAPIEnabled) as? Bool ?? false
         language = AppLanguage(rawValue: defaults.string(forKey: Keys.language) ?? "") ?? AppLanguage.systemDefault
+    }
+
+    private static func clampThreshold(_ value: Int) -> Int {
+        max(1, min(100, value))
     }
 
     private func applyLaunchAtLogin() {

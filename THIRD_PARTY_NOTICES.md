@@ -30,7 +30,7 @@ SOFTWARE.
 
 ## codex-auth
 
-CodexHub's local multi-account store is compatible with the account snapshot and registry layout used by `codex-auth`. CodexHub does not bundle, redistribute, or invoke the `codex-auth` executable.
+CodexHub's local multi-account store is compatible with the account snapshot and registry layout used by `codex-auth`, including the `accounts/registry.json` and `accounts/*.auth.json` files under the Codex home directory. CodexHub implements its account management in Swift and does not bundle, redistribute, or invoke the `codex-auth` executable.
 
 Source: https://github.com/Loongphy/codex-auth
 

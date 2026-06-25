@@ -3,13 +3,18 @@ import AppKit
 import Foundation
 
 final class CodexAuthService {
-    private let accountStore = CodexAccountStore()
+    private let accountStore: CodexAccountStore
     private let appServerCacheURL: URL = {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-            .appendingPathComponent("CodexHub", isDirectory: true)
-        try? FileManager.default.createDirectory(at: appSupport, withIntermediateDirectories: true)
+        let appSupport = LocalStorageSecurity.codexHubApplicationSupportDirectory()
         return appSupport.appendingPathComponent("app-server-quota-cache.json")
     }()
+
+    init(accountStore: CodexAccountStore = CodexAccountStore()) {
+        self.accountStore = accountStore
+        if FileManager.default.fileExists(atPath: appServerCacheURL.path) {
+            try? LocalStorageSecurity.setPrivateFilePermissions(appServerCacheURL)
+        }
+    }
 
     enum QuotaAPIStatus: Equatable {
         case on
@@ -268,7 +273,7 @@ final class CodexAuthService {
             return nil
         }
         defer {
-            try? FileManager.default.removeItem(at: temporaryCodexHome)
+            accountStore.removeTemporaryCodexHome(temporaryCodexHome)
         }
         let lookup = readRateLimitsFromCodexAppServer(accountIdentity: accountIdentity, codexHome: temporaryCodexHome)
         if lookup?.fromCache == false {
@@ -367,9 +372,7 @@ final class CodexAuthService {
         let candidates = recentSessionFiles(in: root, modifiedAfter: since)
         let decoder = JSONDecoder()
         for file in candidates {
-            guard let data = try? Data(contentsOf: file),
-                  let text = String(data: data, encoding: .utf8) else { continue }
-            for line in text.split(separator: "\n", omittingEmptySubsequences: true).reversed() {
+            for line in recentLines(from: file).reversed() {
                 guard line.contains(#""rate_limits""#),
                       line.contains(#""token_count""#),
                       let lineData = String(line).data(using: .utf8),
@@ -389,6 +392,25 @@ final class CodexAuthService {
             }
         }
         return nil
+    }
+
+    private func recentLines(from file: URL, maxBytes: UInt64 = 512 * 1024) -> [Substring] {
+        guard let handle = try? FileHandle(forReadingFrom: file) else { return [] }
+        defer { try? handle.close() }
+        do {
+            let byteCount = try handle.seekToEnd()
+            let startOffset = byteCount > maxBytes ? byteCount - maxBytes : 0
+            try handle.seek(toOffset: startOffset)
+            let data = handle.readDataToEndOfFile()
+            guard let text = String(data: data, encoding: .utf8) else { return [] }
+            var lines = text.split(separator: "\n", omittingEmptySubsequences: true)
+            if startOffset > 0, lines.isEmpty == false {
+                lines.removeFirst()
+            }
+            return lines
+        } catch {
+            return []
+        }
     }
 
     private func recentSessionFiles(in root: URL, modifiedAfter lowerBound: Date) -> [URL] {
@@ -413,9 +435,9 @@ final class CodexAuthService {
 
     private func parseAppServerRateLimitsLine(_ line: String) -> AppServerRateLimits? {
         let decoder = JSONDecoder()
-        guard line.contains(#""id":2"#),
-              let data = line.data(using: .utf8),
-              let response = try? decoder.decode(AppServerResponse.self, from: data) else { return nil }
+        guard let data = line.data(using: .utf8),
+              let response = try? decoder.decode(AppServerResponse.self, from: data),
+              response.id == 2 else { return nil }
         let snapshot = response.result?.rateLimitsByLimitId?["codex"] ?? response.result?.rateLimits
         guard let snapshot else { return nil }
         return AppServerRateLimits(
@@ -435,7 +457,7 @@ final class CodexAuthService {
         entries[accountIdentity] = AppServerQuotaCacheEntry(savedAt: Date(), limits: limits)
         let cache = AppServerQuotaCacheStore(accounts: entries)
         guard let data = try? JSONEncoder.codexHub.encode(cache) else { return }
-        try? data.write(to: appServerCacheURL, options: .atomic)
+        try? LocalStorageSecurity.writePrivateFileAtomically(data, to: appServerCacheURL)
     }
 
     private func loadAppServerCacheEntries() -> [String: AppServerQuotaCacheEntry] {

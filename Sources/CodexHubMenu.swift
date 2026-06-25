@@ -66,6 +66,11 @@ struct CodexHubMenu: View {
                 accountActionOverlay(confirmation)
             }
         }
+        .onExitCommand {
+            if activeAccountConfirmation != nil {
+                cancelAccountActionConfirmation()
+            }
+        }
         .animation(.easeInOut(duration: 0.16), value: model.isSwitchingAccount)
     }
 
@@ -152,6 +157,10 @@ struct CodexHubMenu: View {
                         Text(L.addCodexAccount)
                             .font(.system(size: 12, weight: .semibold))
                         Text(L.addCodexAccountSubtitle)
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                        Text(L.authorizedAccountOnly)
                             .font(.system(size: 10, weight: .medium))
                             .foregroundStyle(.secondary)
                             .lineLimit(2)
@@ -288,9 +297,9 @@ struct CodexHubMenu: View {
                 HStack(spacing: 8) {
                     Spacer()
                     HubActionButton(title: L.notNow, systemImage: "xmark", compact: true, titleOnly: true) {
-                        pendingSwitchAccountIdentity = nil
-                        pendingRemoveAccountIdentity = nil
+                        cancelAccountActionConfirmation()
                     }
+                    .keyboardShortcut(.cancelAction)
                     HubActionButton(
                         title: isSwitch ? L.switchAccount : L.removeAccount,
                         systemImage: isSwitch ? "arrow.triangle.2.circlepath" : "trash",
@@ -316,6 +325,11 @@ struct CodexHubMenu: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .contentShape(Rectangle())
+    }
+
+    private func cancelAccountActionConfirmation() {
+        pendingSwitchAccountIdentity = nil
+        pendingRemoveAccountIdentity = nil
     }
 
     private var usageCard: some View {
@@ -532,6 +546,10 @@ struct CodexHubMenu: View {
                     subtitle: L.accountSuggestionSubtitle,
                     isOn: Binding(get: { settings.autoSwitchEnabled }, set: { settings.autoSwitchEnabled = $0 })
                 )
+                Text(L.accountSuggestionPolicyNote)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
                 if settings.autoSwitchEnabled {
                     thresholdRow(
                         title: L.suggestionThreshold,

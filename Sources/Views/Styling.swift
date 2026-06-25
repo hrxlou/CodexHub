@@ -37,6 +37,7 @@ struct HubButtonStyle: ButtonStyle {
     var tone: Tone = .neutral
     var compact = false
     var hovering = false
+    @Environment(\.isEnabled) private var isEnabled
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
@@ -50,28 +51,32 @@ struct HubButtonStyle: ButtonStyle {
                     .stroke(stroke, lineWidth: 1)
             )
             .clipShape(RoundedRectangle(cornerRadius: compact ? 8 : 10, style: .continuous))
-            .scaleEffect(configuration.isPressed ? 0.97 : 1)
-            .opacity(configuration.isPressed ? 0.82 : 1)
+            .scaleEffect(configuration.isPressed && isEnabled ? 0.97 : 1)
+            .opacity(isEnabled ? (configuration.isPressed ? 0.82 : 1) : 0.45)
             .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
+            .animation(.easeOut(duration: 0.12), value: isEnabled)
     }
 
     private var foreground: Color {
         switch tone {
-        case .neutral: return .primary
+        case .neutral: return isEnabled ? .primary : .secondary
         case .primary: return .white
-        case .danger: return .red
+        case .danger: return isEnabled ? .red : .secondary
         }
     }
 
     private var stroke: Color {
         switch tone {
-        case .neutral: return Color.primary.opacity(0.12)
-        case .primary: return Color.green.opacity(0.22)
-        case .danger: return Color.red.opacity(0.20)
+        case .neutral: return Color.primary.opacity(isEnabled ? 0.12 : 0.07)
+        case .primary: return Color.green.opacity(isEnabled ? 0.22 : 0.10)
+        case .danger: return Color.red.opacity(isEnabled ? 0.20 : 0.08)
         }
     }
 
     private func background(_ pressed: Bool) -> Color {
+        guard isEnabled else {
+            return Color.primary.opacity(0.04)
+        }
         switch tone {
         case .neutral:
             return Color.primary.opacity(pressed ? 0.14 : (hovering ? 0.10 : 0.07))

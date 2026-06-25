@@ -23,10 +23,7 @@ final class CodexAccountStore {
     private var codexHomeURL: URL {
         let environment = ProcessInfo.processInfo.environment
         if let home = environment["CODEX_HOME"], home.isEmpty == false {
-            let url = URL(fileURLWithPath: home, isDirectory: true)
-            if fileManager.fileExists(atPath: url.path) {
-                return url
-            }
+            return URL(fileURLWithPath: home, isDirectory: true)
         }
         return URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
             .appendingPathComponent(".codex", isDirectory: true)
@@ -48,6 +45,7 @@ final class CodexAccountStore {
         lock.lock()
         defer { lock.unlock() }
 
+        try? hardenStoredFilePermissionsLocked()
         if !fileManager.fileExists(atPath: registryURL.path) {
             if let captured = try? captureCurrentLoginLocked(alias: nil), captured {
                 return loadAccountsFromRegistryLocked()
@@ -81,12 +79,12 @@ final class CodexAccountStore {
         let temporaryCodexHome = fileManager.temporaryDirectory
             .appendingPathComponent("CodexHub-Login-\(UUID().uuidString)", isDirectory: true)
         do {
-            try fileManager.createDirectory(at: temporaryCodexHome, withIntermediateDirectories: true)
+            try createPrivateDirectory(at: temporaryCodexHome)
         } catch {
             return AccountLoginResult(result: CommandResult(status: 1, output: error.localizedDescription), identity: nil)
         }
         defer {
-            try? fileManager.removeItem(at: temporaryCodexHome)
+            removeTemporaryCodexHome(temporaryCodexHome)
         }
 
         var args = ["login", "-c", "cli_auth_credentials_store=\"file\""]
@@ -280,15 +278,24 @@ final class CodexAccountStore {
         let temporaryRoot = fileManager.temporaryDirectory
             .appendingPathComponent("CodexHub-CodexHome-\(UUID().uuidString)", isDirectory: true)
         do {
-            try fileManager.createDirectory(at: temporaryRoot, withIntermediateDirectories: true)
+            try createPrivateDirectory(at: temporaryRoot)
             let temporaryAuthURL = temporaryRoot.appendingPathComponent("auth.json")
             try fileManager.copyItem(at: snapshotURL, to: temporaryAuthURL)
             try setPrivatePermissions(temporaryAuthURL)
             return temporaryRoot
         } catch {
-            try? fileManager.removeItem(at: temporaryRoot)
+            removeTemporaryCodexHome(temporaryRoot)
             return nil
         }
+    }
+
+    func removeTemporaryCodexHome(_ temporaryCodexHome: URL) {
+        let temporaryAuthURL = temporaryCodexHome.appendingPathComponent("auth.json")
+        if fileManager.fileExists(atPath: temporaryAuthURL.path) {
+            try? setPrivatePermissions(temporaryAuthURL)
+            try? fileManager.removeItem(at: temporaryAuthURL)
+        }
+        try? fileManager.removeItem(at: temporaryCodexHome)
     }
 
     func updateStoredAuthSnapshot(identity: String, fromTemporaryCodexHome temporaryCodexHome: URL) {
@@ -301,9 +308,6 @@ final class CodexAccountStore {
         }
         do {
             let snapshotURL = authSnapshotURL(for: identity)
-            if fileManager.fileExists(atPath: snapshotURL.path) {
-                backupFileIfPresent(snapshotURL, prefix: nil)
-            }
             try replaceFile(at: snapshotURL, withContentsOf: temporaryAuthURL)
             try setPrivatePermissions(snapshotURL)
         } catch {
@@ -406,9 +410,6 @@ final class CodexAccountStore {
         }
         try createDirectoryIfNeededLocked()
         let snapshotURL = authSnapshotURL(for: identity)
-        if fileManager.fileExists(atPath: snapshotURL.path) {
-            backupFileIfPresent(snapshotURL, prefix: nil)
-        }
         try replaceFile(at: snapshotURL, withContentsOf: sourceAuthURL)
         try setPrivatePermissions(snapshotURL)
 
@@ -601,7 +602,36 @@ final class CodexAccountStore {
     }
 
     private func createDirectoryIfNeededLocked() throws {
-        try fileManager.createDirectory(at: accountsDirectoryURL, withIntermediateDirectories: true)
+        try createPrivateDirectory(at: codexHomeURL)
+        try createPrivateDirectory(at: accountsDirectoryURL)
+    }
+
+    private func createPrivateDirectory(at url: URL) throws {
+        try LocalStorageSecurity.createPrivateDirectory(at: url)
+    }
+
+    private func hardenStoredFilePermissionsLocked() throws {
+        if fileManager.fileExists(atPath: codexHomeURL.path) {
+            try fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: codexHomeURL.path)
+        }
+        if fileManager.fileExists(atPath: authURL.path) {
+            try setPrivatePermissions(authURL)
+        }
+        guard fileManager.fileExists(atPath: accountsDirectoryURL.path) else { return }
+        try fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: accountsDirectoryURL.path)
+        if fileManager.fileExists(atPath: registryURL.path) {
+            try setPrivatePermissions(registryURL)
+        }
+        guard let enumerator = fileManager.enumerator(
+            at: accountsDirectoryURL,
+            includingPropertiesForKeys: [.isRegularFileKey],
+            options: [.skipsSubdirectoryDescendants]
+        ) else { return }
+        for case let url as URL in enumerator where url.lastPathComponent.hasSuffix(".auth.json") {
+            guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey]),
+                  values.isRegularFile == true else { continue }
+            try setPrivatePermissions(url)
+        }
     }
 
     private func authSnapshotURL(for identity: String) -> URL {
@@ -634,6 +664,7 @@ final class CodexAccountStore {
         let backupURL = accountsDirectoryURL.appendingPathComponent(backupName)
         do {
             try fileManager.copyItem(at: url, to: backupURL)
+            try setPrivatePermissions(backupURL)
             return backupURL
         } catch {
             return nil
@@ -662,18 +693,11 @@ final class CodexAccountStore {
     }
 
     private func writeDataAtomically(_ data: Data, to url: URL) throws {
-        let temporaryURL = url.deletingLastPathComponent()
-            .appendingPathComponent(".\(url.lastPathComponent).tmp-\(UUID().uuidString)")
-        try data.write(to: temporaryURL, options: .atomic)
-        if fileManager.fileExists(atPath: url.path) {
-            _ = try fileManager.replaceItemAt(url, withItemAt: temporaryURL)
-        } else {
-            try fileManager.moveItem(at: temporaryURL, to: url)
-        }
+        try LocalStorageSecurity.writePrivateFileAtomically(data, to: url)
     }
 
     private func setPrivatePermissions(_ url: URL) throws {
-        try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        try LocalStorageSecurity.setPrivateFilePermissions(url)
     }
 
     private func validateCurrentLogin() -> CommandResult {

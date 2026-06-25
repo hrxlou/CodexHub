@@ -13,7 +13,7 @@ enum L {
     static var manageAccounts: String { text(ko: "계정 관리", en: "Accounts") }
     static var accountManagement: String { text(ko: "계정 관리", en: "Account Management") }
     static var addCodexAccount: String { text(ko: "Codex 계정 추가", en: "Add Codex Account") }
-    static var addCodexAccountSubtitle: String { text(ko: "Codex 로그인 창을 열고 완료 후 저장", en: "Open Codex login and save it when complete") }
+    static var addCodexAccountSubtitle: String { text(ko: "본인 소유 또는 사용 권한이 있는 계정만 저장", en: "Store only accounts you own or are authorized to use") }
     static var addAccount: String { text(ko: "추가", en: "Add") }
     static var signingIn: String { text(ko: "로그인 중", en: "Signing in") }
     static var storedAccounts: String { text(ko: "저장된 계정", en: "Stored Accounts") }
@@ -49,7 +49,8 @@ enum L {
     static var reminderThreshold: String { text(ko: "알림 시점", en: "Reminder threshold") }
     static var remaining: String { text(ko: "남았을 때", en: "remaining") }
     static var accountSuggestion: String { text(ko: "전환 제안", en: "Switch suggestion") }
-    static var accountSuggestionSubtitle: String { text(ko: "잔여량이 적으면 제안", en: "Suggest when usage is low") }
+    static var accountSuggestionSubtitle: String { text(ko: "잔여량이 적으면 승인 전 제안만 표시", en: "Only asks before switching when usage is low") }
+    static var accountSuggestionPolicyNote: String { text(ko: "OpenAI 또는 조직의 한도/정책 우회 용도로 사용하지 마세요.", en: "Do not use this to bypass OpenAI or organization limits or policies.") }
     static var suggestionThreshold: String { text(ko: "제안 시점", en: "Suggestion threshold") }
     static var privacy: String { text(ko: "개인정보", en: "Privacy") }
     static var attributionHistory: String { text(ko: "계정 연결 기록", en: "Attribution history") }
@@ -78,7 +79,7 @@ enum L {
     static var quotaAPIDisabled: String { text(ko: "상세 상태 조회가 꺼졌습니다", en: "Detailed status lookup disabled") }
     static var attributionHistoryReset: String { text(ko: "계정 연결 기록을 삭제했습니다", en: "Attribution history reset") }
     static var switchCodexAccount: String { text(ko: "Codex 계정을 전환할까요?", en: "Switch Codex account?") }
-    static var notNow: String { text(ko: "나중에", en: "Not Now") }
+    static var notNow: String { text(ko: "취소", en: "Cancel") }
     static var usageReminderTitle: String { text(ko: "CodexHub 사용량 알림", en: "CodexHub usage reminder") }
     static var launchAtLoginRequiresMacOS13: String { text(ko: "로그인 시 실행은 macOS 13 이상에서 지원됩니다", en: "Launch at login requires macOS 13+") }
     static var launchAtLoginEnabled: String { text(ko: "로그인 시 실행이 켜졌습니다", en: "Launch at login enabled") }
@@ -93,13 +94,17 @@ enum L {
     static var accountRemoveFailed: String { text(ko: "계정을 삭제하지 못했습니다", en: "Could not remove account") }
     static var activeAccountCannotBeRemoved: String { text(ko: "활성 계정은 삭제할 수 없습니다", en: "The active account cannot be removed") }
     static var codexRestartRequired: String { text(ko: "계정 전환은 완료됐습니다. Codex 앱을 수동으로 다시 열어주세요", en: "Account switched. Reopen the Codex app manually.") }
+    static var authorizedAccountOnly: String { text(ko: "타인의 credential 공유나 저장은 지원하지 않습니다.", en: "Sharing or storing someone else's credentials is not supported.") }
 
     static func more(_ count: Int) -> String {
         text(ko: "+\(count)개 더", en: "+\(count) more")
     }
 
     static func switchToAccount(_ email: String) -> String {
-        text(ko: "\(email) 계정으로 전환", en: "Switch to \(email)")
+        text(
+            ko: "\(email) 계정으로 전환합니다. OpenAI 또는 조직의 한도/정책 우회 용도로 사용하지 마세요.",
+            en: "Switch to \(email). Do not use this to bypass OpenAI or organization limits or policies."
+        )
     }
 
     static func removeAccountMessage(_ email: String) -> String {
@@ -117,10 +122,10 @@ enum L {
         return text(ko: "\(completed)/\(total)개 파일 확인 중", en: "Scanning \(completed)/\(total) files")
     }
 
-    static func autoSwitchMessage(activeLabel: String, activeRemaining: Int, candidateLabel: String, candidateRemaining: Int) -> String {
+    static func autoSwitchMessage(activeAccount: String, activeRemaining: Int, candidateAccount: String, candidateRemaining: Int) -> String {
         text(
-            ko: "\(activeLabel)은 5H 잔여량이 \(activeRemaining)%입니다. \(candidateLabel)은 \(candidateRemaining)% 남았습니다.",
-            en: "\(activeLabel) has \(activeRemaining)% 5H remaining. \(candidateLabel) has \(candidateRemaining)% remaining."
+            ko: "\(activeAccount)은 5H 잔여량이 \(activeRemaining)%입니다. \(candidateAccount)은 \(candidateRemaining)% 남았습니다. 승인한 경우에만 전환됩니다. OpenAI 또는 조직의 한도/정책 우회 용도로 사용하지 마세요.",
+            en: "\(activeAccount) has \(activeRemaining)% 5H remaining. \(candidateAccount) has \(candidateRemaining)% remaining. CodexHub switches only if you approve. Do not use this to bypass OpenAI or organization limits or policies."
         )
     }
 

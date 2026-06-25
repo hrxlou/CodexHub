@@ -5,8 +5,9 @@ import SwiftUI
 import UserNotifications
 
 final class CodexHubModel: ObservableObject {
-    private let authService = CodexAuthService()
-    private let usageScanner = TokenUsageScanner()
+    private let accountStore: CodexAccountStore
+    private let authService: CodexAuthService
+    private let usageScanner: TokenUsageScanner
     private let attributionStore = AttributionStore()
     private let workQueue = DispatchQueue(label: "local.codexhub.model-work", qos: .utility)
     private let minimumRefreshInterval: TimeInterval = 60
@@ -32,6 +33,10 @@ final class CodexHubModel: ObservableObject {
     private var lastUsageDetailsRefreshDate: Date?
 
     init() {
+        let accountStore = CodexAccountStore()
+        self.accountStore = accountStore
+        self.authService = CodexAuthService(accountStore: accountStore)
+        self.usageScanner = TokenUsageScanner(accountStore: accountStore)
         settingsCancellable = settings.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
         }
@@ -87,8 +92,7 @@ final class CodexHubModel: ObservableObject {
         workQueue.async {
             let listed = self.authService.listAccounts(useAPI: useQuotaAPI)
             let accounts = listed.accounts
-            let defaultLegacy = accounts.first(where: { $0.email.lowercased().hasPrefix("n") || $0.email.lowercased().contains("snu") })?.email
-                ?? accounts.first?.email
+            let defaultLegacy = accounts.first?.email
             self.attributionStore.seedLegacyAccountIfNeeded(defaultLegacy)
             let usage = self.usageScanner.scan(attribution: self.attributionStore, accounts: accounts)
             DispatchQueue.main.async {
@@ -259,7 +263,7 @@ final class CodexHubModel: ObservableObject {
 
         if settings.usageReminderEnabled && remaining <= settings.reminderThreshold {
             let day = Int(Calendar.current.startOfDay(for: Date()).timeIntervalSince1970)
-            let signature = "\(active.email)-\(used)-\(day)"
+            let signature = "\(active.identity)-\(settings.reminderThreshold)-\(day)"
             if signature != lastReminderSignature {
                 lastReminderSignature = signature
                 sendUsageReminder(account: active, used: used, remaining: remaining)
@@ -291,7 +295,7 @@ final class CodexHubModel: ObservableObject {
         let alert = NSAlert()
         alert.alertStyle = .informational
         alert.messageText = L.switchCodexAccount
-        alert.informativeText = L.autoSwitchMessage(activeLabel: active.label, activeRemaining: activeRemaining, candidateLabel: candidate.label, candidateRemaining: candidateRemaining)
+        alert.informativeText = L.autoSwitchMessage(activeAccount: active.email, activeRemaining: activeRemaining, candidateAccount: candidate.email, candidateRemaining: candidateRemaining)
         alert.addButton(withTitle: L.switchAccount)
         alert.addButton(withTitle: L.notNow)
         NSApp.activate(ignoringOtherApps: true)
@@ -305,7 +309,7 @@ final class CodexHubModel: ObservableObject {
         content.title = L.usageReminderTitle
         content.body = L.usageReminderBody(accountLabel: account.label, used: used, remaining: remaining)
         content.sound = .default
-        let identifier = "codexhub-usage-\(account.email.hashValue)-\(used)"
+        let identifier = "codexhub-usage-\(stableIdentifierComponent(account.identity))-\(settings.reminderThreshold)"
         let request = UNNotificationRequest(identifier: identifier, content: content, trigger: nil)
         let center = UNUserNotificationCenter.current()
         center.getNotificationSettings { settings in
@@ -320,5 +324,10 @@ final class CodexHubModel: ObservableObject {
                 break
             }
         }
+    }
+
+    private func stableIdentifierComponent(_ value: String) -> String {
+        let encoded = value.utf8.map { String(format: "%02x", $0) }.joined()
+        return String(encoded.prefix(48))
     }
 }

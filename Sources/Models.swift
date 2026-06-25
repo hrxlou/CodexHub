@@ -189,7 +189,7 @@ struct TokenTotals: Codable, Equatable, Hashable {
     }
 
     var billingTokenTotal: Int {
-        billedInputTokens + cachedInputTokens + outputTokens + reasoningOutputTokens
+        billedInputTokens + cachedInputTokens + outputTokens
     }
 
     var isZero: Bool {
@@ -334,10 +334,12 @@ struct CostTotals: Codable, Equatable {
     }
 
     init(totals: TokenTotals, rates: ModelRates) {
+        let reasoningTokens = max(0, min(totals.reasoningOutputTokens, totals.outputTokens))
+        let nonReasoningOutputTokens = max(totals.outputTokens - reasoningTokens, 0)
         self.inputCost = Double(totals.billedInputTokens) * rates.input / 1_000_000.0
         self.cachedInputCost = Double(totals.cachedInputTokens) * rates.cachedInputRate / 1_000_000.0
-        self.outputCost = Double(totals.outputTokens) * rates.output / 1_000_000.0
-        self.reasoningCost = Double(totals.reasoningOutputTokens) * rates.output / 1_000_000.0
+        self.outputCost = Double(nonReasoningOutputTokens) * rates.output / 1_000_000.0
+        self.reasoningCost = Double(reasoningTokens) * rates.output / 1_000_000.0
     }
 
     func adding(_ other: CostTotals) -> CostTotals {

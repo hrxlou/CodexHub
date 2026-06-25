@@ -6,10 +6,11 @@ final class AttributionStore {
     private(set) var events: [AttributionEvent] = []
 
     init() {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-            .appendingPathComponent("CodexHub", isDirectory: true)
-        try? FileManager.default.createDirectory(at: appSupport, withIntermediateDirectories: true)
+        let appSupport = LocalStorageSecurity.codexHubApplicationSupportDirectory()
         fileURL = appSupport.appendingPathComponent("attribution-events.json")
+        if FileManager.default.fileExists(atPath: fileURL.path) {
+            try? LocalStorageSecurity.setPrivateFilePermissions(fileURL)
+        }
         load()
     }
 
@@ -63,6 +64,6 @@ final class AttributionStore {
 
     private func save() {
         guard let data = try? JSONEncoder.codexHub.encode(events) else { return }
-        try? data.write(to: fileURL, options: .atomic)
+        try? LocalStorageSecurity.writePrivateFileAtomically(data, to: fileURL)
     }
 }

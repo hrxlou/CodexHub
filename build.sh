@@ -16,6 +16,7 @@ mkdir -p "$MACOS_DIR" "$RESOURCES_DIR" "$MODULE_CACHE_DIR"
 
 if [[ ! -f "$ROOT_DIR/Resources/CodexHub.icns" \
   || ! -f "$ROOT_DIR/Resources/CodexHubMenuIcon.png" \
+  || ! -f "$ROOT_DIR/Resources/CodexHubIcon.png" \
   || ! -f "$ROOT_DIR/Resources/CodexHubIconLight.png" \
   || ! -f "$ROOT_DIR/Resources/CodexHubIconDark.png" \
   || "$ROOT_DIR/Resources/CodexHubIconSource.png" -nt "$ROOT_DIR/Resources/CodexHub.icns" ]]; then
