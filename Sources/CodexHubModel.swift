@@ -90,9 +90,6 @@ final class CodexHubModel: ObservableObject {
             let defaultLegacy = accounts.first(where: { $0.email.lowercased().hasPrefix("n") || $0.email.lowercased().contains("snu") })?.email
                 ?? accounts.first?.email
             self.attributionStore.seedLegacyAccountIfNeeded(defaultLegacy)
-            if let active = accounts.first(where: { $0.isActive }) {
-                self.attributionStore.recordActiveAccount(active.email)
-            }
             let usage = self.usageScanner.scan(attribution: self.attributionStore, accounts: accounts)
             DispatchQueue.main.async {
                 self.accounts = accounts
@@ -155,7 +152,7 @@ final class CodexHubModel: ObservableObject {
         isRefreshing = true
         settings.statusMessage = L.accountLoginInProgress
         DispatchQueue.global(qos: .userInitiated).async {
-            let login = self.authService.loginAndActivateAccount(mode: mode)
+            let login = self.authService.loginAndStoreAccount(mode: mode)
             DispatchQueue.main.async {
                 self.isAddingAccount = false
                 self.isRefreshing = false

@@ -69,11 +69,8 @@ final class CodexAccountStore {
         return run(codexPath, args, timeout: 600)
     }
 
-    func loginAndActivateIsolated(mode: LoginMode, alias: String?) -> AccountLoginResult {
-        let previousCapture = captureCurrentLogin(alias: nil)
-        if previousCapture.status != 0 {
-            return AccountLoginResult(result: previousCapture, identity: nil)
-        }
+    func loginAndStoreIsolated(mode: LoginMode, alias: String?) -> AccountLoginResult {
+        _ = captureCurrentLogin(alias: nil)
         guard let codexPath = codexCLIPath() else {
             return AccountLoginResult(
                 result: CommandResult(status: 127, output: L.text(ko: "codex 명령을 찾지 못했습니다", en: "codex command was not found")),
@@ -112,8 +109,7 @@ final class CodexAccountStore {
             return AccountLoginResult(result: CommandResult(status: 1, output: error.localizedDescription), identity: nil)
         }
 
-        let activation = switchAccount(identity: identity)
-        return AccountLoginResult(result: activation, identity: activation.status == 0 ? identity : nil)
+        return AccountLoginResult(result: CommandResult(status: 0, output: ""), identity: identity)
     }
 
     func captureCurrentLogin(alias: String?) -> CommandResult {
@@ -317,7 +313,8 @@ final class CodexAccountStore {
         let primary = makeUsageText(raw: usage?["primary"] as? [String: Any], kind: .fiveHour)
         let secondary = makeUsageText(raw: usage?["secondary"] as? [String: Any], kind: .weekly)
         let lastUsedAt = dateFromUnixSeconds(raw["last_used_at"])
-        let lastActivity = lastUsedAt.map(Format.relative) ?? "-"
+        let lastUsageUpdatedAt = dateFromUnixSeconds(usage?["updated_at"])
+        let lastActivity = (lastUsageUpdatedAt ?? lastUsedAt).map(Format.relative) ?? "-"
         return CodexAccount(
             selector: "\(index + 1)",
             identity: identity,

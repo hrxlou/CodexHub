@@ -1,4 +1,5 @@
 import Darwin
+import AppKit
 import Foundation
 
 final class CodexAuthService {
@@ -49,8 +50,8 @@ final class CodexAuthService {
         accountStore.startCodexLogin(mode: mode)
     }
 
-    func loginAndActivateAccount(mode: LoginMode) -> AccountLoginResult {
-        accountStore.loginAndActivateIsolated(mode: mode, alias: nil)
+    func loginAndStoreAccount(mode: LoginMode) -> AccountLoginResult {
+        accountStore.loginAndStoreIsolated(mode: mode, alias: nil)
     }
 
     func captureCurrentLogin(alias: String?) -> CommandResult {
@@ -69,7 +70,11 @@ final class CodexAuthService {
         if useAPI {
             saveActiveUsageSnapshotIfPossible()
         }
-        return accountStore.switchAccount(identity: emailOrSelector)
+        let result = accountStore.switchAccount(identity: emailOrSelector)
+        if result.status == 0 {
+            restartCodexDesktopAppIfRunning()
+        }
+        return result
     }
 
     func removeStoredAccount(_ identity: String) -> CommandResult {
@@ -126,6 +131,37 @@ final class CodexAuthService {
             return
         }
         accountStore.updateStoredUsage(identity: active.identity, limits: lookup.limits)
+    }
+
+    private func restartCodexDesktopAppIfRunning() {
+        let codexBundleIdentifier = "com.openai.codex"
+        let codexAppURL = URL(fileURLWithPath: "/Applications/Codex.app", isDirectory: true)
+        let workspace = NSWorkspace.shared
+        let runningCodexApps = workspace.runningApplications.filter { app in
+            app.bundleIdentifier == codexBundleIdentifier || app.bundleURL?.standardizedFileURL == codexAppURL.standardizedFileURL
+        }
+        guard runningCodexApps.isEmpty == false else { return }
+
+        for app in runningCodexApps {
+            app.terminate()
+        }
+
+        let deadline = Date().addingTimeInterval(4)
+        while runningCodexApps.contains(where: { $0.isTerminated == false }) && Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        for app in runningCodexApps where app.isTerminated == false {
+            app.forceTerminate()
+        }
+
+        guard FileManager.default.fileExists(atPath: codexAppURL.path) else { return }
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
+        let opened = DispatchSemaphore(value: 0)
+        workspace.openApplication(at: codexAppURL, configuration: configuration) { _, _ in
+            opened.signal()
+        }
+        _ = opened.wait(timeout: .now() + 5)
     }
 
     private struct AppServerResponse: Decodable {
