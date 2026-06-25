@@ -126,12 +126,13 @@ struct ThresholdControl: View {
 struct AccountCardView: View {
     @ObservedObject var model: CodexHubModel
     let account: CodexAccount
+    let onSwitchRequest: (CodexAccount) -> Void
     @State private var hovering = false
 
     var body: some View {
         Button {
             guard !account.isActive, !model.isSwitchingAccount else { return }
-            model.switchAccount(account.identity)
+            onSwitchRequest(account)
         } label: {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(alignment: .center) {

@@ -10,7 +10,7 @@ enum L {
     static var settings: String { text(ko: "설정", en: "Settings") }
     static var back: String { text(ko: "뒤로", en: "Back") }
     static var accounts: String { text(ko: "계정", en: "Accounts") }
-    static var manageAccounts: String { text(ko: "관리", en: "Manage") }
+    static var manageAccounts: String { text(ko: "계정 관리", en: "Accounts") }
     static var accountManagement: String { text(ko: "계정 관리", en: "Account Management") }
     static var addCodexAccount: String { text(ko: "Codex 계정 추가", en: "Add Codex Account") }
     static var addCodexAccountSubtitle: String { text(ko: "Codex 로그인 창을 열고 완료 후 저장", en: "Open Codex login and save it when complete") }

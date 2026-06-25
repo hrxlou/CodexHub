@@ -53,6 +53,14 @@ final class CodexAuthService {
         accountStore.captureCurrentLogin(alias: alias)
     }
 
+    func currentLoginIdentity() -> String? {
+        accountStore.currentLoginIdentity()
+    }
+
+    func waitForCurrentLoginIdentity(preferDifferentFrom previousIdentity: String?, timeout: TimeInterval) -> String? {
+        accountStore.waitForCurrentLoginIdentity(preferDifferentFrom: previousIdentity, timeout: timeout)
+    }
+
     func switchTo(_ emailOrSelector: String, useAPI: Bool) -> CommandResult {
         if useAPI {
             saveActiveUsageSnapshotIfPossible()

@@ -2,6 +2,16 @@ import AppKit
 import Foundation
 import SwiftUI
 
+private enum AccountActionKind {
+    case switchAccount
+    case removeAccount
+}
+
+private struct AccountActionConfirmation {
+    let kind: AccountActionKind
+    let account: CodexAccount
+}
+
 struct CodexHubMenu: View {
     @ObservedObject var model: CodexHubModel
     @ObservedObject var settings: HubSettings
@@ -9,6 +19,7 @@ struct CodexHubMenu: View {
     @State private var panel: HubPanel = .usage
     @State private var tokenCostHover = false
     @State private var pendingRemoveAccountIdentity: String?
+    @State private var pendingSwitchAccountIdentity: String?
 
     init(model: CodexHubModel) {
         self.model = model
@@ -51,6 +62,8 @@ struct CodexHubMenu: View {
         .overlay {
             if model.isSwitchingAccount {
                 switchProgressOverlay
+            } else if let confirmation = activeAccountConfirmation {
+                accountActionOverlay(confirmation)
             }
         }
         .animation(.easeInOut(duration: 0.16), value: model.isSwitchingAccount)
@@ -79,6 +92,18 @@ struct CodexHubMenu: View {
         }
     }
 
+    private var activeAccountConfirmation: AccountActionConfirmation? {
+        if let identity = pendingSwitchAccountIdentity,
+           let account = model.accounts.first(where: { $0.identity == identity }) {
+            return AccountActionConfirmation(kind: .switchAccount, account: account)
+        }
+        if let identity = pendingRemoveAccountIdentity,
+           let account = model.accounts.first(where: { $0.identity == identity }) {
+            return AccountActionConfirmation(kind: .removeAccount, account: account)
+        }
+        return nil
+    }
+
     private var accountGrid: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .center) {
@@ -93,7 +118,9 @@ struct CodexHubMenu: View {
             if model.sortedAccounts.count <= 2 {
                 LazyVGrid(columns: accountColumns, spacing: 10) {
                     ForEach(model.sortedAccounts, id: \.identity) { account in
-                        AccountCardView(model: model, account: account)
+                        AccountCardView(model: model, account: account) { selected in
+                            pendingSwitchAccountIdentity = selected.identity
+                        }
                     }
                     if model.sortedAccounts.count < 2 {
                         AddAccountCardView(isAddingAccount: model.isAddingAccount) {
@@ -105,7 +132,9 @@ struct CodexHubMenu: View {
                 ScrollView(.vertical, showsIndicators: true) {
                     LazyVGrid(columns: accountColumns, spacing: 10) {
                         ForEach(model.sortedAccounts, id: \.identity) { account in
-                            AccountCardView(model: model, account: account)
+                            AccountCardView(model: model, account: account) { selected in
+                                pendingSwitchAccountIdentity = selected.identity
+                            }
                         }
                     }
                     .padding(.trailing, 4)
@@ -201,32 +230,7 @@ struct CodexHubMenu: View {
                     .help(L.removeAccount)
                 }
             }
-
-            if pendingRemoveAccountIdentity == account.identity {
-                removeConfirmationRow(account)
-            }
         }
-    }
-
-    private func removeConfirmationRow(_ account: CodexAccount) -> some View {
-        HStack(alignment: .center, spacing: 8) {
-            Text(L.removeAccountMessage(account.email))
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(.secondary)
-                .lineLimit(2)
-            Spacer(minLength: 8)
-            HubActionButton(title: L.notNow, systemImage: "xmark", compact: true, titleOnly: true) {
-                pendingRemoveAccountIdentity = nil
-            }
-            HubActionButton(title: L.removeAccount, systemImage: "trash", tone: .danger, compact: true, titleOnly: true) {
-                pendingRemoveAccountIdentity = nil
-                model.removeAccount(account.identity)
-            }
-            .disabled(model.removingAccountIdentity != nil)
-        }
-        .padding(8)
-        .background(Color.primary.opacity(0.045))
-        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
     }
 
     private var accountColumns: [GridItem] {
@@ -259,6 +263,56 @@ struct CodexHubMenu: View {
             .padding(.horizontal, 22)
             .padding(.vertical, 18)
             .glassPanel(cornerRadius: 13, tint: Color.white.opacity(0.10), stroke: Color.primary.opacity(0.10))
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .contentShape(Rectangle())
+    }
+
+    private func accountActionOverlay(_ confirmation: AccountActionConfirmation) -> some View {
+        let isSwitch = confirmation.kind == .switchAccount
+        return ZStack {
+            Rectangle()
+                .fill(.ultraThinMaterial)
+                .overlay(Color.black.opacity(0.10))
+
+            VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(isSwitch ? L.switchCodexAccount : L.removeAccount)
+                        .font(.system(size: 15, weight: .semibold))
+                    Text(isSwitch ? L.switchToAccount(confirmation.account.email) : L.removeAccountMessage(confirmation.account.email))
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(3)
+                }
+
+                HStack(spacing: 8) {
+                    Spacer()
+                    HubActionButton(title: L.notNow, systemImage: "xmark", compact: true, titleOnly: true) {
+                        pendingSwitchAccountIdentity = nil
+                        pendingRemoveAccountIdentity = nil
+                    }
+                    HubActionButton(
+                        title: isSwitch ? L.switchAccount : L.removeAccount,
+                        systemImage: isSwitch ? "arrow.triangle.2.circlepath" : "trash",
+                        tone: isSwitch ? .neutral : .danger,
+                        compact: true,
+                        titleOnly: true
+                    ) {
+                        let identity = confirmation.account.identity
+                        pendingSwitchAccountIdentity = nil
+                        pendingRemoveAccountIdentity = nil
+                        if isSwitch {
+                            model.switchAccount(identity)
+                        } else {
+                            model.removeAccount(identity)
+                        }
+                    }
+                    .disabled(model.removingAccountIdentity != nil || model.isSwitchingAccount)
+                }
+            }
+            .padding(18)
+            .frame(width: 300, alignment: .leading)
+            .glassPanel(cornerRadius: 14, tint: Color.white.opacity(0.12), stroke: Color.primary.opacity(0.10))
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .contentShape(Rectangle())

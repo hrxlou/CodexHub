@@ -78,6 +78,28 @@ final class CodexAccountStore {
         }
     }
 
+    func currentLoginIdentity() -> String? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard fileManager.fileExists(atPath: authURL.path) else { return nil }
+        return extractAuthInfo(from: authURL).identity
+    }
+
+    func waitForCurrentLoginIdentity(preferDifferentFrom previousIdentity: String?, timeout: TimeInterval) -> String? {
+        let deadline = Date().addingTimeInterval(timeout)
+        var latestIdentity: String?
+        while Date() < deadline {
+            if let identity = currentLoginIdentity() {
+                latestIdentity = identity
+                if previousIdentity == nil || identity != previousIdentity {
+                    return identity
+                }
+            }
+            Thread.sleep(forTimeInterval: 0.25)
+        }
+        return latestIdentity
+    }
+
     func switchAccount(identity: String) -> CommandResult {
         lock.lock()
         defer { lock.unlock() }
