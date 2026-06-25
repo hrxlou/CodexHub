@@ -11,6 +11,11 @@ struct AccountLoadResult {
     let error: String?
 }
 
+struct AccountLoginResult {
+    let result: CommandResult
+    let identity: String?
+}
+
 final class CodexAccountStore {
     private let fileManager = FileManager.default
     private let lock = NSLock()
@@ -62,6 +67,53 @@ final class CodexAccountStore {
             args.append("--device-auth")
         }
         return run(codexPath, args, timeout: 600)
+    }
+
+    func loginAndActivateIsolated(mode: LoginMode, alias: String?) -> AccountLoginResult {
+        let previousCapture = captureCurrentLogin(alias: nil)
+        if previousCapture.status != 0 {
+            return AccountLoginResult(result: previousCapture, identity: nil)
+        }
+        guard let codexPath = codexCLIPath() else {
+            return AccountLoginResult(
+                result: CommandResult(status: 127, output: L.text(ko: "codex 명령을 찾지 못했습니다", en: "codex command was not found")),
+                identity: nil
+            )
+        }
+
+        let temporaryCodexHome = fileManager.temporaryDirectory
+            .appendingPathComponent("CodexHub-Login-\(UUID().uuidString)", isDirectory: true)
+        do {
+            try fileManager.createDirectory(at: temporaryCodexHome, withIntermediateDirectories: true)
+        } catch {
+            return AccountLoginResult(result: CommandResult(status: 1, output: error.localizedDescription), identity: nil)
+        }
+        defer {
+            try? fileManager.removeItem(at: temporaryCodexHome)
+        }
+
+        var args = ["login", "-c", "cli_auth_credentials_store=\"file\""]
+        if mode == .deviceCode {
+            args.append("--device-auth")
+        }
+        let login = run(codexPath, args, timeout: 600, environmentOverrides: ["CODEX_HOME": temporaryCodexHome.path])
+        guard login.status == 0 else {
+            return AccountLoginResult(result: login, identity: nil)
+        }
+
+        let temporaryAuthURL = temporaryCodexHome.appendingPathComponent("auth.json")
+        let identity: String
+        do {
+            lock.lock()
+            identity = try storeAuthFileLocked(temporaryAuthURL, alias: alias, activate: false)
+            lock.unlock()
+        } catch {
+            lock.unlock()
+            return AccountLoginResult(result: CommandResult(status: 1, output: error.localizedDescription), identity: nil)
+        }
+
+        let activation = switchAccount(identity: identity)
+        return AccountLoginResult(result: activation, identity: activation.status == 0 ? identity : nil)
     }
 
     func captureCurrentLogin(alias: String?) -> CommandResult {
@@ -312,7 +364,15 @@ final class CodexAccountStore {
 
     private func captureCurrentLoginLocked(alias: String?) throws -> Bool {
         guard fileManager.fileExists(atPath: authURL.path) else { return false }
-        let info = extractAuthInfo(from: authURL)
+        _ = try storeAuthFileLocked(authURL, alias: alias, activate: true)
+        return true
+    }
+
+    private func storeAuthFileLocked(_ sourceAuthURL: URL, alias: String?, activate: Bool) throws -> String {
+        guard fileManager.fileExists(atPath: sourceAuthURL.path) else {
+            throw StoreError.invalidAuth
+        }
+        let info = extractAuthInfo(from: sourceAuthURL)
         guard let identity = info.identity else {
             throw StoreError.invalidAuth
         }
@@ -321,7 +381,7 @@ final class CodexAccountStore {
         if fileManager.fileExists(atPath: snapshotURL.path) {
             backupFileIfPresent(snapshotURL, prefix: nil)
         }
-        try replaceFile(at: snapshotURL, withContentsOf: authURL)
+        try replaceFile(at: snapshotURL, withContentsOf: sourceAuthURL)
         try setPrivatePermissions(snapshotURL)
 
         var registry = (try? readRegistryLocked()) ?? emptyRegistry()
@@ -349,10 +409,12 @@ final class CodexAccountStore {
             accounts[existingIndex] = account
         }
         registry["accounts"] = accounts
-        registry["active_account_key"] = identity
-        registry["active_account_activated_at_ms"] = Int(Date().timeIntervalSince1970 * 1000)
+        if activate {
+            registry["active_account_key"] = identity
+            registry["active_account_activated_at_ms"] = Int(Date().timeIntervalSince1970 * 1000)
+        }
         try writeRegistryLocked(registry)
-        return true
+        return identity
     }
 
     private func syncCurrentLoginStateLocked() throws {
@@ -598,7 +660,7 @@ final class CodexAccountStore {
         return result.status == 0 && fileManager.isExecutableFile(atPath: path) ? path : nil
     }
 
-    private func run(_ executable: String, _ args: [String], timeout: TimeInterval) -> CommandResult {
+    private func run(_ executable: String, _ args: [String], timeout: TimeInterval, environmentOverrides: [String: String] = [:]) -> CommandResult {
         let process = Process()
         let pipe = Pipe()
         let outputLock = NSLock()
@@ -607,7 +669,11 @@ final class CodexAccountStore {
         process.arguments = args
         process.standardOutput = pipe
         process.standardError = pipe
-        process.environment = processEnvironment(prependingExecutableDirectory: executable)
+        var environment = processEnvironment(prependingExecutableDirectory: executable)
+        for (key, value) in environmentOverrides {
+            environment[key] = value
+        }
+        process.environment = environment
         pipe.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
             guard data.isEmpty == false else { return }

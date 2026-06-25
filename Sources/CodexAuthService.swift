@@ -49,6 +49,10 @@ final class CodexAuthService {
         accountStore.startCodexLogin(mode: mode)
     }
 
+    func loginAndActivateAccount(mode: LoginMode) -> AccountLoginResult {
+        accountStore.loginAndActivateIsolated(mode: mode, alias: nil)
+    }
+
     func captureCurrentLogin(alias: String?) -> CommandResult {
         accountStore.captureCurrentLogin(alias: alias)
     }

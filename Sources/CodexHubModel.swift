@@ -155,24 +155,15 @@ final class CodexHubModel: ObservableObject {
         isRefreshing = true
         settings.statusMessage = L.accountLoginInProgress
         DispatchQueue.global(qos: .userInitiated).async {
-            let previousIdentity = self.authService.currentLoginIdentity()
-            _ = self.authService.captureCurrentLogin(alias: nil)
-            let login = self.authService.startCodexLogin(mode: mode)
-            let currentIdentity = login.status == 0
-                ? self.authService.waitForCurrentLoginIdentity(preferDifferentFrom: previousIdentity, timeout: 8)
-                : nil
-            let capture = login.status == 0 ? self.authService.captureCurrentLogin(alias: nil) : login
-            let activation = (capture.status == 0 && currentIdentity != nil)
-                ? self.authService.switchTo(currentIdentity!, useAPI: self.settings.quotaAPIEnabled)
-                : capture
+            let login = self.authService.loginAndActivateAccount(mode: mode)
             DispatchQueue.main.async {
                 self.isAddingAccount = false
                 self.isRefreshing = false
-                if login.status == 0 && capture.status == 0 && activation.status == 0 {
+                if login.result.status == 0 {
                     self.settings.statusMessage = L.accountSaved
                     self.refresh(force: true)
                 } else {
-                    let message = activation.output.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let message = login.result.output.trimmingCharacters(in: .whitespacesAndNewlines)
                     self.lastError = message.isEmpty ? L.accountLoginFailed : "\(L.accountLoginFailed): \(message)"
                     self.settings.statusMessage = L.codexLoginLogHint
                 }
