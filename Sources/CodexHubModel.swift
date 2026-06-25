@@ -134,6 +134,10 @@ final class CodexHubModel: ObservableObject {
             DispatchQueue.main.async {
                 if result.status == 0 {
                     self.attributionStore.recordActiveAccount(target.email)
+                    let message = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if message.isEmpty == false {
+                        self.settings.statusMessage = message
+                    }
                     self.accounts = self.accounts.map { $0.settingActive($0.identity == identity) }
                     self.isRefreshing = false
                     self.refresh(force: true)
@@ -292,7 +296,7 @@ final class CodexHubModel: ObservableObject {
         alert.addButton(withTitle: L.notNow)
         NSApp.activate(ignoringOtherApps: true)
         if alert.runModal() == .alertFirstButtonReturn {
-            switchAccount(candidate.email)
+            switchAccount(candidate.identity)
         }
     }
 

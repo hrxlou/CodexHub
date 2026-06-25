@@ -133,6 +133,10 @@ final class CodexAccountStore {
         return extractAuthInfo(from: authURL).identity
     }
 
+    func resolvedCodexHome() -> URL {
+        codexHomeURL
+    }
+
     func waitForCurrentLoginIdentity(preferDifferentFrom previousIdentity: String?, timeout: TimeInterval) -> String? {
         let deadline = Date().addingTimeInterval(timeout)
         var latestIdentity: String?
@@ -153,8 +157,10 @@ final class CodexAccountStore {
         defer { lock.unlock() }
         do {
             _ = try captureCurrentLoginLocked(alias: nil)
-            let registry = try readRegistryLocked()
-            guard let accounts = registry["accounts"] as? [[String: Any]],
+            let previousRegistry = try readRegistryLocked()
+            let previousAuthExisted = fileManager.fileExists(atPath: authURL.path)
+            let previousAuthData = previousAuthExisted ? try Data(contentsOf: authURL) : nil
+            guard let accounts = previousRegistry["accounts"] as? [[String: Any]],
                   accounts.contains(where: { ($0["account_key"] as? String) == identity }) else {
                 return CommandResult(status: 1, output: L.text(ko: "계정을 찾지 못했습니다", en: "Account was not found"))
             }
@@ -164,17 +170,13 @@ final class CodexAccountStore {
             }
 
             try createDirectoryIfNeededLocked()
-            let previousAuthBackup = backupFileIfPresent(authURL, prefix: "auth.json.bak")
             try replaceFile(at: authURL, withContentsOf: snapshotURL)
             try setPrivatePermissions(authURL)
 
             let validation = validateCurrentLogin()
             guard validation.status == 0 else {
-                if let previousAuthBackup {
-                    try replaceFile(at: authURL, withContentsOf: previousAuthBackup)
-                    try setPrivatePermissions(authURL)
-                    try? syncCurrentLoginStateLocked()
-                }
+                try restoreAuthLocked(data: previousAuthData, existed: previousAuthExisted)
+                try writeRegistryLocked(previousRegistry)
                 let message = validation.output.trimmingCharacters(in: .whitespacesAndNewlines)
                 return CommandResult(
                     status: validation.status == 0 ? 1 : validation.status,
@@ -194,6 +196,7 @@ final class CodexAccountStore {
         defer { lock.unlock() }
         do {
             var registry = try readRegistryLocked()
+            let originalRegistry = registry
             if (registry["active_account_key"] as? String) == identity {
                 return CommandResult(status: 1, output: L.text(ko: "활성 계정은 삭제할 수 없습니다", en: "The active account cannot be removed"))
             }
@@ -204,10 +207,38 @@ final class CodexAccountStore {
             guard updated.count != accounts.count else {
                 return CommandResult(status: 1, output: L.text(ko: "계정을 찾지 못했습니다", en: "Account was not found"))
             }
+
+            let snapshotURL = authSnapshotURL(for: identity)
+            var tombstoneURL: URL?
+            if fileManager.fileExists(atPath: snapshotURL.path) {
+                try createDirectoryIfNeededLocked()
+                let tombstone = accountsDirectoryURL
+                    .appendingPathComponent(".\(snapshotURL.lastPathComponent).delete-\(UUID().uuidString)")
+                try fileManager.moveItem(at: snapshotURL, to: tombstone)
+                tombstoneURL = tombstone
+            }
+
             registry["accounts"] = updated
-            backupFileIfPresent(authSnapshotURL(for: identity), prefix: nil)
-            try? fileManager.removeItem(at: authSnapshotURL(for: identity))
-            try writeRegistryLocked(registry)
+            do {
+                try writeRegistryLocked(registry)
+            } catch {
+                if let tombstoneURL {
+                    try? fileManager.moveItem(at: tombstoneURL, to: snapshotURL)
+                    try? setPrivatePermissions(snapshotURL)
+                }
+                throw error
+            }
+
+            if let tombstoneURL {
+                do {
+                    try fileManager.removeItem(at: tombstoneURL)
+                } catch {
+                    try? writeRegistryLocked(originalRegistry)
+                    try? fileManager.moveItem(at: tombstoneURL, to: snapshotURL)
+                    try? setPrivatePermissions(snapshotURL)
+                    throw error
+                }
+            }
             return CommandResult(status: 0, output: "")
         } catch {
             return CommandResult(status: 1, output: error.localizedDescription)
@@ -619,6 +650,15 @@ final class CodexAccountStore {
     private func replaceFile(at target: URL, withContentsOf source: URL) throws {
         let data = try Data(contentsOf: source)
         try writeDataAtomically(data, to: target)
+    }
+
+    private func restoreAuthLocked(data: Data?, existed: Bool) throws {
+        if existed, let data {
+            try writeDataAtomically(data, to: authURL)
+            try setPrivatePermissions(authURL)
+        } else if fileManager.fileExists(atPath: authURL.path) {
+            try fileManager.removeItem(at: authURL)
+        }
     }
 
     private func writeDataAtomically(_ data: Data, to url: URL) throws {

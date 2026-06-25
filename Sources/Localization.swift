@@ -92,6 +92,7 @@ enum L {
     static var accountRemoved: String { text(ko: "계정을 삭제했습니다", en: "Account removed") }
     static var accountRemoveFailed: String { text(ko: "계정을 삭제하지 못했습니다", en: "Could not remove account") }
     static var activeAccountCannotBeRemoved: String { text(ko: "활성 계정은 삭제할 수 없습니다", en: "The active account cannot be removed") }
+    static var codexRestartRequired: String { text(ko: "계정 전환은 완료됐습니다. Codex 앱을 수동으로 다시 열어주세요", en: "Account switched. Reopen the Codex app manually.") }
 
     static func more(_ count: Int) -> String {
         text(ko: "+\(count)개 더", en: "+\(count) more")

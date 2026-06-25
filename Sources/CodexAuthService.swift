@@ -72,7 +72,12 @@ final class CodexAuthService {
         }
         let result = accountStore.switchAccount(identity: emailOrSelector)
         if result.status == 0 {
-            restartCodexDesktopAppIfRunning()
+            switch restartCodexDesktopAppIfRunning() {
+            case .restarted, .notRunning:
+                return result
+            case .failed:
+                return CommandResult(status: 0, output: L.codexRestartRequired)
+            }
         }
         return result
     }
@@ -133,20 +138,21 @@ final class CodexAuthService {
         accountStore.updateStoredUsage(identity: active.identity, limits: lookup.limits)
     }
 
-    private func restartCodexDesktopAppIfRunning() {
+    private func restartCodexDesktopAppIfRunning() -> CodexRestartResult {
         let codexBundleIdentifier = "com.openai.codex"
         let codexAppURL = URL(fileURLWithPath: "/Applications/Codex.app", isDirectory: true)
         let workspace = NSWorkspace.shared
         let runningCodexApps = workspace.runningApplications.filter { app in
             app.bundleIdentifier == codexBundleIdentifier || app.bundleURL?.standardizedFileURL == codexAppURL.standardizedFileURL
         }
-        guard runningCodexApps.isEmpty == false else { return }
+        guard runningCodexApps.isEmpty == false else { return .notRunning }
+        let reopenURL = runningCodexApps.first?.bundleURL ?? codexAppURL
 
         for app in runningCodexApps {
             app.terminate()
         }
 
-        let deadline = Date().addingTimeInterval(4)
+        let deadline = Date().addingTimeInterval(6)
         while runningCodexApps.contains(where: { $0.isTerminated == false }) && Date() < deadline {
             Thread.sleep(forTimeInterval: 0.1)
         }
@@ -154,14 +160,25 @@ final class CodexAuthService {
             app.forceTerminate()
         }
 
-        guard FileManager.default.fileExists(atPath: codexAppURL.path) else { return }
+        guard FileManager.default.fileExists(atPath: reopenURL.path) else { return .failed }
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.activates = true
         let opened = DispatchSemaphore(value: 0)
-        workspace.openApplication(at: codexAppURL, configuration: configuration) { _, _ in
+        var didOpen = false
+        workspace.openApplication(at: reopenURL, configuration: configuration) { app, error in
+            didOpen = app != nil && error == nil
             opened.signal()
         }
-        _ = opened.wait(timeout: .now() + 5)
+        guard opened.wait(timeout: .now() + 5) == .success, didOpen else {
+            return .failed
+        }
+        return .restarted
+    }
+
+    private enum CodexRestartResult {
+        case restarted
+        case notRunning
+        case failed
     }
 
     private struct AppServerResponse: Decodable {
@@ -208,6 +225,15 @@ final class CodexAuthService {
         let accountIdentity: String?
         let savedAt: Date
         let limits: AppServerRateLimits
+    }
+
+    private struct AppServerQuotaCacheEntry: Codable {
+        let savedAt: Date
+        let limits: AppServerRateLimits
+    }
+
+    private struct AppServerQuotaCacheStore: Codable {
+        var accounts: [String: AppServerQuotaCacheEntry]
     }
 
     private struct LocalSessionRateLimitEvent: Decodable {
@@ -335,8 +361,7 @@ final class CodexAuthService {
 
     private func readActiveRateLimitsFromLocalSessions(since: Date?) -> AppServerLookup? {
         guard let since else { return nil }
-        let root = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".codex", isDirectory: true)
+        let root = accountStore.resolvedCodexHome()
             .appendingPathComponent("sessions", isDirectory: true)
         guard FileManager.default.fileExists(atPath: root.path) else { return nil }
         let candidates = recentSessionFiles(in: root, modifiedAfter: since)
@@ -400,17 +425,31 @@ final class CodexAuthService {
     }
 
     private func loadAppServerCache(accountIdentity: String) -> AppServerRateLimits? {
-        guard let data = try? Data(contentsOf: appServerCacheURL),
-              let cache = try? JSONDecoder.codexHub.decode(AppServerQuotaCache.self, from: data),
-              cache.accountIdentity == accountIdentity,
-              Date().timeIntervalSince(cache.savedAt) < 900 else { return nil }
-        return cache.limits
+        guard let entry = loadAppServerCacheEntries()[accountIdentity],
+              Date().timeIntervalSince(entry.savedAt) < 900 else { return nil }
+        return entry.limits
     }
 
     private func saveAppServerCache(_ limits: AppServerRateLimits, accountIdentity: String) {
-        let cache = AppServerQuotaCache(accountIdentity: accountIdentity, savedAt: Date(), limits: limits)
+        var entries = loadAppServerCacheEntries()
+        entries[accountIdentity] = AppServerQuotaCacheEntry(savedAt: Date(), limits: limits)
+        let cache = AppServerQuotaCacheStore(accounts: entries)
         guard let data = try? JSONEncoder.codexHub.encode(cache) else { return }
         try? data.write(to: appServerCacheURL, options: .atomic)
+    }
+
+    private func loadAppServerCacheEntries() -> [String: AppServerQuotaCacheEntry] {
+        guard let data = try? Data(contentsOf: appServerCacheURL) else { return [:] }
+        if let store = try? JSONDecoder.codexHub.decode(AppServerQuotaCacheStore.self, from: data) {
+            return store.accounts
+        }
+        if let legacy = try? JSONDecoder.codexHub.decode(AppServerQuotaCache.self, from: data),
+           let accountIdentity = legacy.accountIdentity {
+            return [
+                accountIdentity: AppServerQuotaCacheEntry(savedAt: legacy.savedAt, limits: legacy.limits)
+            ]
+        }
+        return [:]
     }
 
     private func makeAppServerWindow(_ payload: AppServerRateLimitWindowPayload) -> AppServerRateLimitWindow {
