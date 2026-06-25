@@ -80,6 +80,8 @@ final class CodexAuthService {
             switch restartCodexDesktopAppIfRunning() {
             case .restarted, .notRunning:
                 return result
+            case .terminationBlocked:
+                return CommandResult(status: 0, output: L.codexRestartBlockedByInterrupt)
             case .failed:
                 return CommandResult(status: 0, output: L.codexRestartRequired)
             }
@@ -147,22 +149,37 @@ final class CodexAuthService {
         let codexBundleIdentifier = "com.openai.codex"
         let codexAppURL = URL(fileURLWithPath: "/Applications/Codex.app", isDirectory: true)
         let workspace = NSWorkspace.shared
-        let runningCodexApps = workspace.runningApplications.filter { app in
-            app.bundleIdentifier == codexBundleIdentifier || app.bundleURL?.standardizedFileURL == codexAppURL.standardizedFileURL
-        }
+        let runningCodexApps = runningCodexDesktopApplications(
+            workspace: workspace,
+            bundleIdentifier: codexBundleIdentifier,
+            appURL: codexAppURL
+        )
         guard runningCodexApps.isEmpty == false else { return .notRunning }
         let reopenURL = runningCodexApps.first?.bundleURL ?? codexAppURL
 
         for app in runningCodexApps {
-            app.terminate()
+            _ = app.terminate()
         }
 
-        let deadline = Date().addingTimeInterval(6)
-        while runningCodexApps.contains(where: { $0.isTerminated == false }) && Date() < deadline {
-            Thread.sleep(forTimeInterval: 0.1)
+        let terminationDeadline = Date().addingTimeInterval(45)
+        while Date() < terminationDeadline {
+            let stillRunning = runningCodexDesktopApplications(
+                workspace: workspace,
+                bundleIdentifier: codexBundleIdentifier,
+                appURL: codexAppURL
+            )
+            if stillRunning.isEmpty {
+                break
+            }
+            Thread.sleep(forTimeInterval: 0.25)
         }
-        for app in runningCodexApps where app.isTerminated == false {
-            app.forceTerminate()
+
+        guard runningCodexDesktopApplications(
+            workspace: workspace,
+            bundleIdentifier: codexBundleIdentifier,
+            appURL: codexAppURL
+        ).isEmpty else {
+            return .terminationBlocked
         }
 
         guard FileManager.default.fileExists(atPath: reopenURL.path) else { return .failed }
@@ -174,15 +191,40 @@ final class CodexAuthService {
             didOpen = app != nil && error == nil
             opened.signal()
         }
-        guard opened.wait(timeout: .now() + 5) == .success, didOpen else {
+        guard opened.wait(timeout: .now() + 10) == .success, didOpen else {
             return .failed
         }
-        return .restarted
+        let launchDeadline = Date().addingTimeInterval(10)
+        while Date() < launchDeadline {
+            if runningCodexDesktopApplications(
+                workspace: workspace,
+                bundleIdentifier: codexBundleIdentifier,
+                appURL: codexAppURL
+            ).isEmpty == false {
+                return .restarted
+            }
+            Thread.sleep(forTimeInterval: 0.25)
+        }
+        return .failed
+    }
+
+    private func runningCodexDesktopApplications(
+        workspace: NSWorkspace,
+        bundleIdentifier: String,
+        appURL: URL
+    ) -> [NSRunningApplication] {
+        workspace.runningApplications.filter { app in
+            app.isTerminated == false && (
+                app.bundleIdentifier == bundleIdentifier
+                || app.bundleURL?.standardizedFileURL == appURL.standardizedFileURL
+            )
+        }
     }
 
     private enum CodexRestartResult {
         case restarted
         case notRunning
+        case terminationBlocked
         case failed
     }
 

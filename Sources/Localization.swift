@@ -94,6 +94,7 @@ enum L {
     static var accountRemoveFailed: String { text(ko: "계정을 삭제하지 못했습니다", en: "Could not remove account") }
     static var activeAccountCannotBeRemoved: String { text(ko: "활성 계정은 삭제할 수 없습니다", en: "The active account cannot be removed") }
     static var codexRestartRequired: String { text(ko: "계정 전환은 완료됐습니다. Codex 앱을 수동으로 다시 열어주세요", en: "Account switched. Reopen the Codex app manually.") }
+    static var codexRestartBlockedByInterrupt: String { text(ko: "계정 전환은 완료됐습니다. Codex가 작업 인터럽트 확인을 기다려 재시작을 취소했습니다. Codex 경고에서 직접 선택하세요.", en: "Account switched. Codex is waiting for an interrupt confirmation, so restart was canceled. Choose directly in the Codex prompt.") }
     static var authorizedAccountOnly: String { text(ko: "타인의 credential 공유나 저장은 지원하지 않습니다.", en: "Sharing or storing someone else's credentials is not supported.") }
 
     static func more(_ count: Int) -> String {
