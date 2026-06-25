@@ -144,6 +144,33 @@ final class CodexAccountStore {
         }
     }
 
+    func updateStoredUsage(identity: String, limits: AppServerRateLimits) {
+        lock.lock()
+        defer { lock.unlock() }
+        do {
+            var registry = try readRegistryLocked()
+            guard var accounts = registry["accounts"] as? [[String: Any]],
+                  let existingIndex = accounts.firstIndex(where: { ($0["account_key"] as? String) == identity }) else {
+                return
+            }
+            var account = accounts[existingIndex]
+            var usage = account["last_usage"] as? [String: Any] ?? [:]
+            if let primary = limits.primary {
+                usage["primary"] = usageSnapshot(from: primary)
+            }
+            if let secondary = limits.secondary {
+                usage["secondary"] = usageSnapshot(from: secondary)
+            }
+            usage["updated_at"] = Int(Date().timeIntervalSince1970)
+            account["last_usage"] = usage
+            accounts[existingIndex] = account
+            registry["accounts"] = accounts
+            try writeRegistryLocked(registry)
+        } catch {
+            return
+        }
+    }
+
     private func loadAccountsFromRegistryLocked() -> AccountLoadResult {
         do {
             let registry = try readRegistryLocked()
@@ -212,6 +239,14 @@ final class CodexAccountStore {
             ? "\(clamped)% (\(Format.shortDate(reset)))"
             : "\(clamped)% (\(Format.time(reset)))"
         return (text, clamped)
+    }
+
+    private func usageSnapshot(from window: AppServerRateLimitWindow) -> [String: Any] {
+        var snapshot: [String: Any] = ["used_percent": window.displayPercent]
+        if let resetsAt = window.resetsAt {
+            snapshot["resets_at"] = resetsAt.timeIntervalSince1970
+        }
+        return snapshot
     }
 
     private func captureCurrentLoginLocked(alias: String?) throws -> Bool {

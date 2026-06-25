@@ -133,14 +133,11 @@ final class CodexHubModel: ObservableObject {
         switchingAccountEmail = target.email
         isRefreshing = true
         DispatchQueue.global(qos: .userInitiated).async {
-            let result = self.authService.switchTo(identity)
+            let result = self.authService.switchTo(identity, useAPI: self.settings.quotaAPIEnabled)
             DispatchQueue.main.async {
                 if result.status == 0 {
                     self.attributionStore.recordActiveAccount(target.email)
                     self.accounts = self.accounts.map { $0.settingActive($0.identity == identity) }
-                    DispatchQueue.global(qos: .utility).async {
-                        _ = self.authService.restartCodex()
-                    }
                     self.isRefreshing = false
                     self.refresh(force: true)
                 } else {
@@ -165,9 +162,6 @@ final class CodexHubModel: ObservableObject {
                 self.isRefreshing = false
                 if login.status == 0 && capture.status == 0 {
                     self.settings.statusMessage = L.accountSaved
-                    DispatchQueue.global(qos: .utility).async {
-                        _ = self.authService.restartCodex()
-                    }
                     self.refresh(force: true)
                 } else {
                     let message = capture.output.trimmingCharacters(in: .whitespacesAndNewlines)

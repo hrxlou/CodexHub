@@ -32,13 +32,12 @@ final class CodexAuthService {
 
     func listAccounts(useAPI: Bool) -> (accounts: [CodexAccount], error: String?, quotaAPIStatus: QuotaAPIStatus, autoDisabledAPI: Bool) {
         let loaded = accountStore.loadAccounts()
-        let fallback = applyAppServerFallbackIfUseful(loaded.accounts)
-        var status: QuotaAPIStatus = useAPI ? .on : .off
-        if fallback.usedAppServer {
-            status = .fallback
+        guard useAPI else {
+            return (loaded.accounts, loaded.error, .off, false)
         }
-        let error = loaded.error ?? fallback.notice
-        return (fallback.accounts, error, status, false)
+        let lookup = applyAppServerRateLimitsIfUseful(loaded.accounts)
+        let status: QuotaAPIStatus = lookup.usedLiveAppServer ? .on : (lookup.usedFallback ? .fallback : .failed)
+        return (lookup.accounts, loaded.error, status, false)
     }
 
     func setQuotaAPIEnabled(_ enabled: Bool) -> CommandResult {
@@ -53,43 +52,37 @@ final class CodexAuthService {
         accountStore.captureCurrentLogin(alias: alias)
     }
 
-    func switchTo(_ emailOrSelector: String) -> CommandResult {
-        accountStore.switchAccount(identity: emailOrSelector)
+    func switchTo(_ emailOrSelector: String, useAPI: Bool) -> CommandResult {
+        if useAPI {
+            saveActiveUsageSnapshotIfPossible()
+        }
+        return accountStore.switchAccount(identity: emailOrSelector)
     }
 
     func removeStoredAccount(_ identity: String) -> CommandResult {
         accountStore.removeStoredAccount(identity: identity)
     }
 
-    func restartCodex() -> CommandResult {
-        let quit = run("/usr/bin/osascript", ["-e", "quit app \"Codex\""], timeout: 4)
-        Thread.sleep(forTimeInterval: 0.4)
-        let open = run("/usr/bin/open", ["-a", "Codex"], timeout: 4)
-        return open.status == 0 ? open : quit
+    private func applyAppServerRateLimitsIfUseful(_ accounts: [CodexAccount]) -> (accounts: [CodexAccount], usedLiveAppServer: Bool, usedFallback: Bool) {
+        guard let active = accounts.first(where: { $0.isActive }) else { return (accounts, false, false) }
+        if let lookup = readActiveRateLimitsFromCodexAppServer(accountIdentity: active.identity) {
+            accountStore.updateStoredUsage(identity: active.identity, limits: lookup.limits)
+            let updated = accounts.map { account in
+                account.isActive ? account.applyingAppServerRateLimits(lookup.limits) : account
+            }
+            return (updated, !lookup.fromCache, lookup.fromCache)
+        }
+
+        return (accounts, false, false)
     }
 
-    private func applyAppServerFallbackIfUseful(_ accounts: [CodexAccount]) -> (accounts: [CodexAccount], usedAppServer: Bool, notice: String?) {
-        guard let active = accounts.first(where: { $0.isActive }) else { return (accounts, false, nil) }
-        let needsFallback = active.fiveHourUsedPercent == nil
-            || active.weeklyUsedPercent == nil
-            || active.weeklyUsage == "-"
-            || active.weeklyUsage == "Unavailable"
-        guard let lookup = readActiveRateLimitsFromCodexAppServer(accountIdentity: active.identity)
-            ?? readActiveRateLimitsFromLocalSessions(since: active.lastUsedAt) else {
-            guard needsFallback else { return (accounts, false, nil) }
-            let updated = accounts.map { account in
-                account.isActive ? account.withUnavailableRateLimitsIfNeeded() : account
-            }
-            return (updated, false, L.text(ko: "활성 계정의 로컬 상태를 확인할 수 없습니다", en: "Active account local status unavailable"))
+    private func saveActiveUsageSnapshotIfPossible() {
+        let loaded = accountStore.loadAccounts()
+        guard let active = loaded.accounts.first(where: { $0.isActive }),
+              let lookup = readActiveRateLimitsFromCodexAppServer(accountIdentity: active.identity) else {
+            return
         }
-        let limits = lookup.limits
-        let updated = accounts.map { account in
-            account.isActive ? account.applyingAppServerRateLimits(limits) : account
-        }
-        let notice = lookup.fromCache
-            ? L.text(ko: "활성 계정에 저장된 로컬 상태를 표시 중입니다", en: "Using cached local status fallback for active account only")
-            : L.text(ko: "활성 계정의 로컬 상태를 표시 중입니다", en: "Using local status fallback for active account only")
-        return (updated, true, notice)
+        accountStore.updateStoredUsage(identity: active.identity, limits: lookup.limits)
     }
 
     private struct AppServerResponse: Decodable {
@@ -136,34 +129,6 @@ final class CodexAuthService {
         let accountIdentity: String?
         let savedAt: Date
         let limits: AppServerRateLimits
-    }
-
-    private struct LocalSessionRateLimitEvent: Decodable {
-        let timestamp: String?
-        let type: String
-        let payload: Payload?
-
-        struct Payload: Decodable {
-            let type: String?
-            let rateLimits: LocalSessionRateLimits?
-
-            enum CodingKeys: String, CodingKey {
-                case type
-                case rateLimits = "rate_limits"
-            }
-        }
-    }
-
-    private struct LocalSessionRateLimits: Decodable {
-        let limitId: String?
-        let primary: AppServerRateLimitWindowPayload?
-        let secondary: AppServerRateLimitWindowPayload?
-
-        enum CodingKeys: String, CodingKey {
-            case limitId = "limit_id"
-            case primary
-            case secondary
-        }
     }
 
     private func readActiveRateLimitsFromCodexAppServer(accountIdentity: String) -> AppServerLookup? {
@@ -242,59 +207,6 @@ final class CodexAuthService {
             stderr.fileHandleForReading.readabilityHandler = nil
             return loadAppServerCache(accountIdentity: accountIdentity).map { AppServerLookup(limits: $0, fromCache: true) }
         }
-    }
-
-    private func readActiveRateLimitsFromLocalSessions(since: Date?) -> AppServerLookup? {
-        let root = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".codex", isDirectory: true)
-            .appendingPathComponent("sessions", isDirectory: true)
-        guard FileManager.default.fileExists(atPath: root.path) else { return nil }
-        let lowerBound = since?.addingTimeInterval(-3600)
-        let candidates = recentSessionFiles(in: root, modifiedAfter: lowerBound)
-        let decoder = JSONDecoder()
-        for file in candidates {
-            guard let data = try? Data(contentsOf: file),
-                  let text = String(data: data, encoding: .utf8) else { continue }
-            for line in text.split(separator: "\n", omittingEmptySubsequences: true).reversed() {
-                guard line.contains(#""rate_limits""#),
-                      line.contains(#""token_count""#),
-                      let lineData = String(line).data(using: .utf8),
-                      let event = try? decoder.decode(LocalSessionRateLimitEvent.self, from: lineData),
-                      event.type == "event_msg",
-                      event.payload?.type == "token_count",
-                      let snapshot = event.payload?.rateLimits,
-                      snapshot.limitId == nil || snapshot.limitId == "codex",
-                      snapshot.primary != nil || snapshot.secondary != nil else { continue }
-                return AppServerLookup(
-                    limits: AppServerRateLimits(
-                        primary: snapshot.primary.map(makeAppServerWindow),
-                        secondary: snapshot.secondary.map(makeAppServerWindow)
-                    ),
-                    fromCache: true
-                )
-            }
-        }
-        return nil
-    }
-
-    private func recentSessionFiles(in root: URL, modifiedAfter lowerBound: Date?) -> [URL] {
-        guard let enumerator = FileManager.default.enumerator(
-            at: root,
-            includingPropertiesForKeys: [.isRegularFileKey, .contentModificationDateKey],
-            options: [.skipsHiddenFiles]
-        ) else { return [] }
-        var files: [(url: URL, modifiedAt: Date)] = []
-        for case let url as URL in enumerator where url.pathExtension == "jsonl" {
-            guard let values = try? url.resourceValues(forKeys: [.isRegularFileKey, .contentModificationDateKey]),
-                  values.isRegularFile == true,
-                  let modifiedAt = values.contentModificationDate else { continue }
-            if let lowerBound, modifiedAt < lowerBound { continue }
-            files.append((url, modifiedAt))
-        }
-        return files
-            .sorted { $0.modifiedAt > $1.modifiedAt }
-            .prefix(30)
-            .map(\.url)
     }
 
     private func parseAppServerRateLimitsLine(_ line: String) -> AppServerRateLimits? {
