@@ -104,16 +104,9 @@ private enum RollupMode {
 
 private struct UsageAttribution {
     let historicalEmail: String?
-    let todayStart: Date
     let attribution: AttributionStore
 
     func email(for date: Date) -> String {
-        if date < todayStart {
-            if let historicalEmail {
-                return historicalEmail
-            }
-            return attribution.accountEmail(at: date)
-        }
         let resolved = attribution.accountEmail(at: date)
         if resolved == "Unknown" {
             return historicalEmail ?? "Unknown"
@@ -267,7 +260,6 @@ final class TokenUsageScanner {
 
         let attributionPolicy = UsageAttribution(
             historicalEmail: historicalAccountEmail(from: accounts),
-            todayStart: todayStart,
             attribution: attribution
         )
         let rollupRecords: [SessionFileRecord]

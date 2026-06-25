@@ -18,9 +18,11 @@ final class CodexHubModel: ObservableObject {
     @Published var lastError: String?
     @Published var isRefreshing = false
     @Published var isLoadingDetails = false
+    @Published var isAddingAccount = false
     @Published var usageDetailsProgress: Double?
     @Published var usageDetailsProgressText: String?
     @Published var switchingAccountEmail: String?
+    @Published var removingAccountIdentity: String?
     @Published var quotaAPIStatus: CodexAuthService.QuotaAPIStatus = .off
     @Published var lastRefreshDate: Date?
     private var refreshTimer: Timer?
@@ -37,6 +39,11 @@ final class CodexHubModel: ObservableObject {
         refreshTimer = Timer.scheduledTimer(withTimeInterval: 300, repeats: true) { [weak self] _ in
             self?.refresh(force: false)
         }
+        refreshTimer?.tolerance = 30
+    }
+
+    deinit {
+        refreshTimer?.invalidate()
     }
 
     var activeAccount: CodexAccount? {
@@ -119,17 +126,18 @@ final class CodexHubModel: ObservableObject {
         return String(email.prefix(21)) + "..."
     }
 
-    func switchAccount(_ email: String) {
-        guard accounts.first(where: { $0.email == email })?.isActive != true else { return }
+    func switchAccount(_ identity: String) {
+        guard let target = accounts.first(where: { $0.identity == identity }) else { return }
+        guard target.isActive != true else { return }
         guard !isSwitchingAccount else { return }
-        switchingAccountEmail = email
+        switchingAccountEmail = target.email
         isRefreshing = true
         DispatchQueue.global(qos: .userInitiated).async {
-            let result = self.authService.switchTo(email)
+            let result = self.authService.switchTo(identity)
             DispatchQueue.main.async {
                 if result.status == 0 {
-                    self.attributionStore.recordActiveAccount(email)
-                    self.accounts = self.accounts.map { $0.settingActive($0.email == email) }
+                    self.attributionStore.recordActiveAccount(target.email)
+                    self.accounts = self.accounts.map { $0.settingActive($0.identity == identity) }
                     DispatchQueue.global(qos: .utility).async {
                         _ = self.authService.restartCodex()
                     }
@@ -139,6 +147,55 @@ final class CodexHubModel: ObservableObject {
                     self.lastError = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
                     self.switchingAccountEmail = nil
                     self.isRefreshing = false
+                }
+            }
+        }
+    }
+
+    func addAccount(mode: LoginMode = .browser) {
+        guard !isAddingAccount else { return }
+        isAddingAccount = true
+        isRefreshing = true
+        settings.statusMessage = L.accountLoginInProgress
+        DispatchQueue.global(qos: .userInitiated).async {
+            let login = self.authService.startCodexLogin(mode: mode)
+            let capture = login.status == 0 ? self.authService.captureCurrentLogin(alias: nil) : login
+            DispatchQueue.main.async {
+                self.isAddingAccount = false
+                self.isRefreshing = false
+                if login.status == 0 && capture.status == 0 {
+                    self.settings.statusMessage = L.accountSaved
+                    self.refresh(force: true)
+                } else {
+                    let message = capture.output.trimmingCharacters(in: .whitespacesAndNewlines)
+                    self.lastError = message.isEmpty ? L.accountLoginFailed : "\(L.accountLoginFailed): \(message)"
+                    self.settings.statusMessage = L.codexLoginLogHint
+                }
+            }
+        }
+    }
+
+    func removeAccount(_ identity: String) {
+        guard let account = accounts.first(where: { $0.identity == identity }) else { return }
+        guard !account.isActive else {
+            lastError = L.activeAccountCannotBeRemoved
+            return
+        }
+        guard removingAccountIdentity == nil else { return }
+        removingAccountIdentity = identity
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result = self.authService.removeStoredAccount(identity)
+            DispatchQueue.main.async {
+                self.removingAccountIdentity = nil
+                if result.status == 0 {
+                    self.settings.statusMessage = L.accountRemoved
+                    self.accounts.removeAll { $0.identity == identity }
+                    self.usageDetails = nil
+                    self.lastUsageDetailsRefreshDate = nil
+                    self.refresh(force: true)
+                } else {
+                    let message = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+                    self.lastError = message.isEmpty ? L.accountRemoveFailed : message
                 }
             }
         }

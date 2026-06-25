@@ -10,6 +10,16 @@ enum L {
     static var settings: String { text(ko: "설정", en: "Settings") }
     static var back: String { text(ko: "뒤로", en: "Back") }
     static var accounts: String { text(ko: "계정", en: "Accounts") }
+    static var manageAccounts: String { text(ko: "관리", en: "Manage") }
+    static var accountManagement: String { text(ko: "계정 관리", en: "Account Management") }
+    static var addCodexAccount: String { text(ko: "Codex 계정 추가", en: "Add Codex Account") }
+    static var addCodexAccountSubtitle: String { text(ko: "Codex 로그인 창을 열고 완료 후 저장", en: "Open Codex login and save it when complete") }
+    static var addAccount: String { text(ko: "추가", en: "Add") }
+    static var signingIn: String { text(ko: "로그인 중", en: "Signing in") }
+    static var storedAccounts: String { text(ko: "저장된 계정", en: "Stored Accounts") }
+    static var noStoredAccounts: String { text(ko: "저장된 계정이 없습니다", en: "No stored accounts") }
+    static var removeAccount: String { text(ko: "삭제", en: "Remove") }
+    static var removing: String { text(ko: "삭제 중", en: "Removing") }
     static var switchingAccount: String { text(ko: "계정 전환 중", en: "Switching account") }
     static var tokenCost: String { text(ko: "토큰 비용", en: "Token Cost") }
     static var details: String { text(ko: "상세", en: "Details") }
@@ -75,6 +85,13 @@ enum L {
     static var launchAtLoginDisabled: String { text(ko: "로그인 시 실행이 꺼졌습니다", en: "Launch at login disabled") }
     static var notificationsEnabled: String { text(ko: "알림이 켜졌습니다", en: "Notifications enabled") }
     static var notificationsDenied: String { text(ko: "알림이 허용되지 않았습니다", en: "Notifications were not allowed") }
+    static var accountLoginInProgress: String { text(ko: "Codex 로그인을 진행 중입니다", en: "Codex login is in progress") }
+    static var accountSaved: String { text(ko: "Codex 계정을 저장했습니다", en: "Codex account saved") }
+    static var accountLoginFailed: String { text(ko: "Codex 로그인을 완료하지 못했습니다", en: "Codex login did not complete") }
+    static var codexLoginLogHint: String { text(ko: "자세한 내용은 codex-login.log를 확인하세요", en: "Check codex-login.log for details") }
+    static var accountRemoved: String { text(ko: "계정을 삭제했습니다", en: "Account removed") }
+    static var accountRemoveFailed: String { text(ko: "계정을 삭제하지 못했습니다", en: "Could not remove account") }
+    static var activeAccountCannotBeRemoved: String { text(ko: "활성 계정은 삭제할 수 없습니다", en: "The active account cannot be removed") }
 
     static func more(_ count: Int) -> String {
         text(ko: "+\(count)개 더", en: "+\(count) more")
@@ -82,6 +99,10 @@ enum L {
 
     static func switchToAccount(_ email: String) -> String {
         text(ko: "\(email) 계정으로 전환", en: "Switch to \(email)")
+    }
+
+    static func removeAccountMessage(_ email: String) -> String {
+        text(ko: "\(email) 계정의 저장된 로그인 정보를 삭제할까요?", en: "Remove the stored login for \(email)?")
     }
 
     static func ledgerRecordCount(_ count: Int) -> String {

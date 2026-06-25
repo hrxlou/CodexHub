@@ -2,6 +2,7 @@ import Darwin
 import Foundation
 
 final class CodexAuthService {
+    private let accountStore = CodexAccountStore()
     private let appServerCacheURL: URL = {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
             .appendingPathComponent("CodexHub", isDirectory: true)
@@ -30,28 +31,34 @@ final class CodexAuthService {
     }
 
     func listAccounts(useAPI: Bool) -> (accounts: [CodexAccount], error: String?, quotaAPIStatus: QuotaAPIStatus, autoDisabledAPI: Bool) {
-        let result = runCodexAuthList(useAPI: useAPI)
-        guard result.status == 0 else {
-            let message = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
-            return ([], message.isEmpty ? L.text(ko: "codex-auth 목록을 불러오지 못했습니다", en: "codex-auth list failed") : message, .failed, false)
-        }
-
-        let parsed = parseAccounts(result.output)
-        let fallback = applyAppServerFallbackIfUseful(parsed)
+        let loaded = accountStore.loadAccounts()
+        let fallback = applyAppServerFallbackIfUseful(loaded.accounts)
         var status: QuotaAPIStatus = useAPI ? .on : .off
         if fallback.usedAppServer {
             status = .fallback
         }
-        let error = parsed.isEmpty ? L.text(ko: "codex-auth에 설정된 계정이 없습니다", en: "No codex-auth accounts found") : fallback.notice
+        let error = loaded.error ?? fallback.notice
         return (fallback.accounts, error, status, false)
     }
 
     func setQuotaAPIEnabled(_ enabled: Bool) -> CommandResult {
-        runCodexAuth(["config", "api", enabled ? "enable" : "disable"], timeout: 8)
+        CommandResult(status: 0, output: enabled ? L.quotaAPIEnabled : L.quotaAPIDisabled)
+    }
+
+    func startCodexLogin(mode: LoginMode) -> CommandResult {
+        accountStore.startCodexLogin(mode: mode)
+    }
+
+    func captureCurrentLogin(alias: String?) -> CommandResult {
+        accountStore.captureCurrentLogin(alias: alias)
     }
 
     func switchTo(_ emailOrSelector: String) -> CommandResult {
-        runCodexAuth(["switch", emailOrSelector], timeout: 12)
+        accountStore.switchAccount(identity: emailOrSelector)
+    }
+
+    func removeStoredAccount(_ identity: String) -> CommandResult {
+        accountStore.removeStoredAccount(identity: identity)
     }
 
     func restartCodex() -> CommandResult {
@@ -61,44 +68,14 @@ final class CodexAuthService {
         return open.status == 0 ? open : quit
     }
 
-    private func parseAccounts(_ output: String) -> [CodexAccount] {
-        output.split(whereSeparator: \.isNewline).compactMap { rawLine in
-            let tokens = rawLine.split(whereSeparator: { $0 == " " || $0 == "\t" }).map(String.init)
-            guard !tokens.isEmpty else { return nil }
-            let isActive = tokens.first == "*"
-            let offset = isActive ? 1 : 0
-            guard tokens.count >= offset + 3, tokens[offset].allSatisfy(\.isNumber) else { return nil }
-            let selector = tokens[offset]
-            let email = tokens[offset + 1]
-            let plan = tokens[offset + 2]
-            var cursor = offset + 3
-            let fiveHour = Self.parseUsage(tokens, from: cursor)
-            cursor = fiveHour.nextIndex
-            let weekly = Self.parseUsage(tokens, from: cursor)
-            cursor = weekly.nextIndex
-            let lastActivity = tokens.dropFirst(cursor).joined(separator: " ")
-            return CodexAccount(
-                selector: selector,
-                email: email,
-                plan: plan,
-                fiveHourUsage: fiveHour.text,
-                fiveHourUsedPercent: fiveHour.usedPercent,
-                weeklyUsage: weekly.text,
-                weeklyUsedPercent: weekly.usedPercent,
-                lastActivity: lastActivity.isEmpty ? "-" : lastActivity,
-                isActive: isActive
-            )
-        }
-    }
-
     private func applyAppServerFallbackIfUseful(_ accounts: [CodexAccount]) -> (accounts: [CodexAccount], usedAppServer: Bool, notice: String?) {
         guard let active = accounts.first(where: { $0.isActive }) else { return (accounts, false, nil) }
         let needsFallback = active.fiveHourUsedPercent == nil
             || active.weeklyUsedPercent == nil
             || active.weeklyUsage == "-"
             || active.weeklyUsage == "Unavailable"
-        guard needsFallback else { return (accounts, false, nil) }
         guard let lookup = readActiveRateLimitsFromCodexAppServer() else {
+            guard needsFallback else { return (accounts, false, nil) }
             let updated = accounts.map { account in
                 account.isActive ? account.withUnavailableRateLimitsIfNeeded() : account
             }
@@ -253,86 +230,6 @@ final class CodexAuthService {
         let clampedUsed = max(0, min(100, used))
         let reset = payload.resetsAt.map { Date(timeIntervalSince1970: $0) }
         return AppServerRateLimitWindow(displayPercent: clampedUsed, resetsAt: reset)
-    }
-
-    private static func parseUsage(_ tokens: [String], from startIndex: Int) -> (text: String, usedPercent: Int?, nextIndex: Int) {
-        guard startIndex < tokens.count else { return ("-", nil, startIndex) }
-        let first = tokens[startIndex]
-        if first == "-" { return ("-", nil, startIndex + 1) }
-        if !first.contains("%") {
-            if first == "401" || first == "400" { return ("Login expired", nil, startIndex + 1) }
-            return ("Unavailable", nil, startIndex + 1)
-        }
-        var parts = [first]
-        var cursor = startIndex + 1
-        if cursor < tokens.count, tokens[cursor].hasPrefix("(") {
-            while cursor < tokens.count {
-                parts.append(tokens[cursor])
-                if tokens[cursor].hasSuffix(")") {
-                    cursor += 1
-                    break
-                }
-                cursor += 1
-            }
-        }
-        return (parts.joined(separator: " "), firstPercent(in: first), cursor)
-    }
-
-    private static func firstPercent(in token: String) -> Int? {
-        let digits = token.prefix { $0.isNumber }
-        return digits.isEmpty ? nil : Int(digits)
-    }
-
-    private func runCodexAuth(_ args: [String], timeout: TimeInterval) -> CommandResult {
-        guard let path = codexAuthPath() else {
-            return CommandResult(status: 127, output: L.text(ko: "codex-auth를 찾지 못했습니다", en: "codex-auth was not found"))
-        }
-        return run(path, args, timeout: timeout)
-    }
-
-    private func runCodexAuthList(useAPI: Bool) -> CommandResult {
-        let explicitArgs = useAPI ? ["list", "--api"] : ["list", "--skip-api"]
-        let explicit = runCodexAuth(explicitArgs, timeout: 8)
-        if explicit.status == 0 || !looksLikeUnsupportedOption(explicit.output) {
-            return explicit
-        }
-
-        let configured = setQuotaAPIEnabled(useAPI)
-        guard configured.status == 0 else { return configured }
-        return runCodexAuth(["list"], timeout: 8)
-    }
-
-    private func looksLikeUnsupportedOption(_ output: String) -> Bool {
-        let lowercased = output.lowercased()
-        return lowercased.contains("unknown option")
-            || lowercased.contains("unknown argument")
-            || lowercased.contains("unrecognized option")
-            || lowercased.contains("unexpected argument")
-            || lowercased.contains("usage:")
-    }
-
-    private func codexAuthPath() -> String? {
-        let home = NSHomeDirectory()
-        let nvmNodeDir = URL(fileURLWithPath: "\(home)/.nvm/versions/node")
-        if let versions = try? FileManager.default.contentsOfDirectory(at: nvmNodeDir, includingPropertiesForKeys: nil) {
-            for versionDir in versions {
-                let path = versionDir.appendingPathComponent("bin/codex-auth").path
-                if FileManager.default.isExecutableFile(atPath: path) { return path }
-            }
-        }
-
-        let candidates = [
-            "\(home)/.local/bin/codex-auth",
-            "/opt/homebrew/bin/codex-auth",
-            "/usr/local/bin/codex-auth"
-        ]
-        if let path = candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) {
-            return path
-        }
-
-        let result = run("/bin/zsh", ["-l", "-c", "which codex-auth"], timeout: 1)
-        let path = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
-        return result.status == 0 && FileManager.default.isExecutableFile(atPath: path) ? path : nil
     }
 
     private func codexCLIPath() -> String? {

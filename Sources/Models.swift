@@ -7,16 +7,50 @@ struct CommandResult {
 
 struct CodexAccount: Codable, Equatable {
     let selector: String
+    let identity: String
     let email: String
+    let alias: String?
     let plan: String
     let fiveHourUsage: String
     let fiveHourUsedPercent: Int?
     let weeklyUsage: String
     let weeklyUsedPercent: Int?
     let lastActivity: String
+    let lastUsedAt: Date?
     let isActive: Bool
 
+    init(
+        selector: String,
+        identity: String? = nil,
+        email: String,
+        alias: String? = nil,
+        plan: String,
+        fiveHourUsage: String,
+        fiveHourUsedPercent: Int?,
+        weeklyUsage: String,
+        weeklyUsedPercent: Int?,
+        lastActivity: String,
+        lastUsedAt: Date? = nil,
+        isActive: Bool
+    ) {
+        self.selector = selector
+        self.identity = identity ?? selector
+        self.email = email
+        self.alias = alias
+        self.plan = plan
+        self.fiveHourUsage = fiveHourUsage
+        self.fiveHourUsedPercent = fiveHourUsedPercent
+        self.weeklyUsage = weeklyUsage
+        self.weeklyUsedPercent = weeklyUsedPercent
+        self.lastActivity = lastActivity
+        self.lastUsedAt = lastUsedAt
+        self.isActive = isActive
+    }
+
     var label: String {
+        if let alias, alias.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+            return alias
+        }
         let trimmed = email.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let first = trimmed.first else { return "?" }
         return String(first).uppercased()
@@ -35,13 +69,16 @@ struct CodexAccount: Codable, Equatable {
     func applyingAppServerRateLimits(_ limits: AppServerRateLimits) -> CodexAccount {
         CodexAccount(
             selector: selector,
+            identity: identity,
             email: email,
+            alias: alias,
             plan: plan,
             fiveHourUsage: limits.primary?.displayText(kind: .fiveHour) ?? fiveHourUsage,
             fiveHourUsedPercent: limits.primary?.displayPercent ?? fiveHourUsedPercent,
             weeklyUsage: limits.secondary?.displayText(kind: .weekly) ?? weeklyUsage,
             weeklyUsedPercent: limits.secondary?.displayPercent ?? weeklyUsedPercent,
             lastActivity: lastActivity,
+            lastUsedAt: lastUsedAt,
             isActive: isActive
         )
     }
@@ -49,13 +86,16 @@ struct CodexAccount: Codable, Equatable {
     func settingActive(_ active: Bool) -> CodexAccount {
         CodexAccount(
             selector: selector,
+            identity: identity,
             email: email,
+            alias: alias,
             plan: plan,
             fiveHourUsage: fiveHourUsage,
             fiveHourUsedPercent: fiveHourUsedPercent,
             weeklyUsage: weeklyUsage,
             weeklyUsedPercent: weeklyUsedPercent,
             lastActivity: lastActivity,
+            lastUsedAt: lastUsedAt,
             isActive: active
         )
     }
@@ -63,13 +103,16 @@ struct CodexAccount: Codable, Equatable {
     func withUnavailableRateLimitsIfNeeded() -> CodexAccount {
         CodexAccount(
             selector: selector,
+            identity: identity,
             email: email,
+            alias: alias,
             plan: plan,
             fiveHourUsage: fiveHourUsedPercent == nil ? "Unavailable" : fiveHourUsage,
             fiveHourUsedPercent: fiveHourUsedPercent,
             weeklyUsage: weeklyUsedPercent == nil || weeklyUsage == "-" ? "Unavailable" : weeklyUsage,
             weeklyUsedPercent: weeklyUsedPercent,
             lastActivity: lastActivity,
+            lastUsedAt: lastUsedAt,
             isActive: isActive
         )
     }
@@ -497,8 +540,7 @@ struct Format {
     static func relative(_ date: Date?) -> String {
         guard let date else { return L.text(ko: "업데이트 없음", en: "Updated --") }
         let seconds = max(Int(Date().timeIntervalSince(date)), 0)
-        if seconds < 5 { return L.text(ko: "방금 업데이트", en: "Updated just now") }
-        if seconds < 60 { return L.text(ko: "\(seconds)초 전 업데이트", en: "Updated \(seconds)s ago") }
+        if seconds < 60 { return L.text(ko: "방금 업데이트", en: "Updated just now") }
         let minutes = seconds / 60
         if minutes < 60 { return L.text(ko: "\(minutes)분 전 업데이트", en: "Updated \(minutes)m ago") }
         let hours = minutes / 60

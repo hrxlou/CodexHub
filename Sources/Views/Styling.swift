@@ -5,6 +5,7 @@ enum HubPanel {
     case usage
     case costDetails
     case settings
+    case accountManagement
 }
 
 enum HubImages {

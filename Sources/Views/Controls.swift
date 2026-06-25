@@ -131,7 +131,7 @@ struct AccountCardView: View {
     var body: some View {
         Button {
             guard !account.isActive, !model.isSwitchingAccount else { return }
-            model.switchAccount(account.email)
+            model.switchAccount(account.identity)
         } label: {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(alignment: .center) {

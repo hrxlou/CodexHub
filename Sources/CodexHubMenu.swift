@@ -23,6 +23,8 @@ struct CodexHubMenu: View {
                 byAccountCard
             } else if panel == .costDetails {
                 tokenCostDetails
+            } else if panel == .accountManagement {
+                accountManagementPanel
             } else {
                 settingsPanel
             }
@@ -78,23 +80,29 @@ struct CodexHubMenu: View {
 
     private var accountGrid: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(L.accounts)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(.secondary)
+            HStack(alignment: .center) {
+                Text(L.accounts)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                HubActionButton(title: L.manageAccounts, systemImage: "person.crop.circle.badge.gearshape", compact: true) {
+                    panel = .accountManagement
+                }
+            }
             if model.sortedAccounts.count <= 1 {
-                ForEach(model.sortedAccounts, id: \.email) { account in
+                ForEach(model.sortedAccounts, id: \.identity) { account in
                     AccountCardView(model: model, account: account)
                 }
             } else if model.sortedAccounts.count == 2 {
                 LazyVGrid(columns: accountColumns, spacing: 10) {
-                    ForEach(model.sortedAccounts, id: \.email) { account in
+                    ForEach(model.sortedAccounts, id: \.identity) { account in
                         AccountCardView(model: model, account: account)
                     }
                 }
             } else {
                 ScrollView(.vertical, showsIndicators: true) {
                     LazyVGrid(columns: accountColumns, spacing: 10) {
-                        ForEach(model.sortedAccounts, id: \.email) { account in
+                        ForEach(model.sortedAccounts, id: \.identity) { account in
                             AccountCardView(model: model, account: account)
                         }
                     }
@@ -102,6 +110,105 @@ struct CodexHubMenu: View {
                 }
                 .frame(maxHeight: 300)
             }
+        }
+    }
+
+    private var accountManagementPanel: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            sectionCard(title: L.accountManagement) {
+                HStack(alignment: .center, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(L.addCodexAccount)
+                            .font(.system(size: 12, weight: .semibold))
+                        Text(L.addCodexAccountSubtitle)
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    }
+                    Spacer()
+                    HubActionButton(
+                        title: model.isAddingAccount ? L.signingIn : L.addAccount,
+                        systemImage: model.isAddingAccount ? "hourglass" : "plus",
+                        compact: true
+                    ) {
+                        model.addAccount()
+                    }
+                    .disabled(model.isAddingAccount)
+                }
+            }
+
+            sectionCard(title: L.storedAccounts) {
+                if model.sortedAccounts.isEmpty {
+                    Text(L.noStoredAccounts)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(model.sortedAccounts, id: \.identity) { account in
+                        accountManagementRow(account)
+                        if account.identity != model.sortedAccounts.last?.identity {
+                            Divider().opacity(0.45)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func accountManagementRow(_ account: CodexAccount) -> some View {
+        HStack(alignment: .center, spacing: 10) {
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(account.label)
+                        .font(.system(size: 12, weight: .semibold))
+                        .lineLimit(1)
+                    if account.isActive {
+                        Text(L.active)
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(Color.green)
+                            .clipShape(Capsule())
+                    }
+                }
+                Text(account.email)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                HStack(spacing: 8) {
+                    Text(account.plan)
+                    Text(account.lastActivity)
+                }
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            }
+            Spacer()
+            HubActionButton(
+                title: model.removingAccountIdentity == account.identity ? L.removing : L.removeAccount,
+                systemImage: "trash",
+                tone: .danger,
+                compact: true
+            ) {
+                confirmRemoveAccount(account)
+            }
+            .disabled(account.isActive || model.removingAccountIdentity != nil)
+            .help(account.isActive ? L.activeAccountCannotBeRemoved : L.removeAccount)
+        }
+    }
+
+    private func confirmRemoveAccount(_ account: CodexAccount) {
+        guard !account.isActive else { return }
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = L.removeAccount
+        alert.informativeText = L.removeAccountMessage(account.email)
+        alert.addButton(withTitle: L.removeAccount)
+        alert.addButton(withTitle: L.notNow)
+        NSApp.activate(ignoringOtherApps: true)
+        if alert.runModal() == .alertFirstButtonReturn {
+            model.removeAccount(account.identity)
         }
     }
 
