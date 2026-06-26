@@ -258,3 +258,51 @@ struct AddAccountCardView: View {
         .help(L.addCodexAccount)
     }
 }
+
+struct AccountGridActionCardView: View {
+    let title: String
+    let subtitle: String
+    let systemImage: String
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 9) {
+                HStack(alignment: .center) {
+                    Image(systemName: systemImage)
+                        .font(.system(size: 13, weight: .bold))
+                        .frame(width: 34, height: 34)
+                        .foregroundStyle(Color.primary)
+                        .background(Color.primary.opacity(hovering ? 0.12 : 0.07))
+                        .clipShape(Circle())
+                    Spacer()
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Color.primary)
+                        .lineLimit(1)
+                    Text(subtitle)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+
+                Spacer(minLength: 0)
+            }
+            .padding(11)
+            .frame(maxWidth: .infinity, minHeight: 126, alignment: .topLeading)
+            .glassPanel(
+                cornerRadius: 10,
+                tint: Color.white.opacity(hovering ? 0.11 : 0.065),
+                stroke: Color.primary.opacity(hovering ? 0.16 : 0.075),
+                hovering: hovering
+            )
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .help(title)
+    }
+}

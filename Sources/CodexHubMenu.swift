@@ -18,6 +18,7 @@ struct CodexHubMenu: View {
     @Environment(\.colorScheme) private var colorScheme
     @State private var panel: HubPanel = .usage
     @State private var tokenCostHover = false
+    @State private var accountsExpanded = false
     @State private var pendingRemoveAccountIdentity: String?
     @State private var pendingSwitchAccountIdentity: String?
 
@@ -130,17 +131,23 @@ struct CodexHubMenu: View {
                     }
                 }
             } else {
-                ScrollView(.vertical, showsIndicators: true) {
-                    LazyVGrid(columns: accountColumns, spacing: 10) {
-                        ForEach(model.sortedAccounts, id: \.identity) { account in
-                            AccountCardView(model: model, account: account) { selected in
-                                pendingSwitchAccountIdentity = selected.identity
+                VStack(alignment: .leading, spacing: 8) {
+                    accountGridBody
+
+                    if accountsExpanded {
+                        HStack {
+                            Spacer()
+                            HubActionButton(title: L.collapseAccounts, systemImage: "chevron.up", compact: true) {
+                                accountsExpanded = false
                             }
                         }
                     }
-                    .padding(.trailing, 4)
                 }
-                .frame(maxHeight: 300)
+            }
+        }
+        .onChange(of: model.sortedAccounts.count) { _, count in
+            if count <= 4 {
+                accountsExpanded = false
             }
         }
     }
@@ -243,6 +250,68 @@ struct CodexHubMenu: View {
             GridItem(.flexible(minimum: 0), spacing: 14),
             GridItem(.flexible(minimum: 0), spacing: 14)
         ]
+    }
+
+    private var accountGridBody: some View {
+        Group {
+            if accountGridShouldScroll {
+                ScrollView(.vertical, showsIndicators: true) {
+                    accountGridCells
+                        .padding(.trailing, 4)
+                        .padding(.bottom, 10)
+                }
+                .frame(height: 300)
+            } else {
+                accountGridCells
+            }
+        }
+    }
+
+    private var accountGridCells: some View {
+        LazyVGrid(columns: accountColumns, spacing: 10) {
+            ForEach(visibleAccountCards, id: \.identity) { account in
+                AccountCardView(model: model, account: account) { selected in
+                    pendingSwitchAccountIdentity = selected.identity
+                }
+            }
+
+            if accountGridShowMoreCount > 0 {
+                AccountGridActionCardView(
+                    title: L.showAllAccounts,
+                    subtitle: L.more(accountGridShowMoreCount),
+                    systemImage: "chevron.down"
+                ) {
+                    accountsExpanded = true
+                }
+            } else if model.sortedAccounts.count == 3 {
+                AddAccountCardView(isAddingAccount: model.isAddingAccount) {
+                    model.addAccount()
+                }
+            }
+        }
+    }
+
+    private var visibleAccountCards: [CodexAccount] {
+        if accountsExpanded || model.sortedAccounts.count <= 4 {
+            return model.sortedAccounts
+        }
+        return Array(model.sortedAccounts.prefix(3))
+    }
+
+    private var accountGridShowMoreCount: Int {
+        guard !accountsExpanded else { return 0 }
+        return max(0, model.sortedAccounts.count - visibleAccountCards.count)
+    }
+
+    private var accountGridShouldScroll: Bool {
+        accountsExpanded && accountGridContentHeight > 300
+    }
+
+    private var accountGridContentHeight: CGFloat {
+        let cardHeight: CGFloat = 126
+        let rowSpacing: CGFloat = 10
+        let rowCount = CGFloat((visibleAccountCards.count + 1) / 2)
+        return rowCount * cardHeight + max(0, rowCount - 1) * rowSpacing
     }
 
     private var switchProgressOverlay: some View {
