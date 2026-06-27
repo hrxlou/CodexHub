@@ -8,20 +8,27 @@ final class CodexHubModel: ObservableObject {
     private let accountStore: CodexAccountStore
     private let authService: CodexAuthService
     private let usageScanner: TokenUsageScanner
+    private let usageHistoryStore: UsageHistoryStore
     private let attributionStore = AttributionStore()
     private let workQueue = DispatchQueue(label: "local.codexhub.model-work", qos: .utility)
     private let minimumRefreshInterval: TimeInterval = 60
     private let minimumDetailsRefreshInterval: TimeInterval = 30 * 60
+    private let minimumDashboardRefreshInterval: TimeInterval = 30 * 60
     let settings = HubSettings()
     @Published var accounts: [CodexAccount] = []
     @Published var usage = UsageSnapshot(today: .zero, todayByAccount: [:], recentDaily: [], scannedFiles: 0, lastError: nil)
     @Published var usageDetails: UsageDetailSnapshot?
+    @Published var dashboardSnapshot = DashboardSnapshot.empty
     @Published var lastError: String?
     @Published var isRefreshing = false
     @Published var isLoadingDetails = false
+    @Published var isLoadingDashboard = false
     @Published var isAddingAccount = false
     @Published var usageDetailsProgress: Double?
     @Published var usageDetailsProgressText: String?
+    @Published var dashboardProgress: Double?
+    @Published var dashboardProgressText: String?
+    @Published var dashboardOpenRequest: UUID?
     @Published var switchingAccountEmail: String?
     @Published var removingAccountIdentity: String?
     @Published var quotaAPIStatus: CodexAuthService.QuotaAPIStatus = .off
@@ -31,12 +38,18 @@ final class CodexHubModel: ObservableObject {
     private var lastReminderSignature: String?
     private var lastAutoSwitchSignature: String?
     private var lastUsageDetailsRefreshDate: Date?
+    private var lastDashboardRefreshDate: Date?
+    private var dashboardRangeDays: Int?
+    private var refreshGeneration = 0
+    private var usageDetailsGeneration = 0
+    private var dashboardGeneration = 0
 
     init() {
         let accountStore = CodexAccountStore()
         self.accountStore = accountStore
         self.authService = CodexAuthService(accountStore: accountStore)
         self.usageScanner = TokenUsageScanner(accountStore: accountStore)
+        self.usageHistoryStore = UsageHistoryStore()
         settingsCancellable = settings.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
         }
@@ -60,33 +73,68 @@ final class CodexHubModel: ObservableObject {
     }
 
     var menuBarTitle: String {
+        let totalTodayCost = usage.today.costs.totalCost
         guard let activeAccount else {
-            return "CodexHub · \(Format.money(usage.today.costs.totalCost))"
+            return settings.menuBarShowsCost ? "CodexHub · \(Format.money(totalTodayCost))" : "CodexHub"
         }
         let activeUsage = usage.todayByAccount[activeAccount.email] ?? .zero
-        return "\(activeAccount.label) · 5H \(Format.percentRemaining(fromUsed: activeAccount.fiveHourUsedPercent)) · W \(Format.percentRemaining(fromUsed: activeAccount.weeklyUsedPercent)) · \(Format.money(activeUsage.costs.totalCost))"
+        var parts: [String] = []
+
+        if settings.menuBarShowsAccountName {
+            parts.append(activeAccount.label)
+        }
+        if settings.menuBarShowsFiveHour {
+            parts.append("\(activeAccount.primaryQuotaLabel) \(Format.percentRemaining(fromUsed: activeAccount.fiveHourUsedPercent))")
+        }
+        if settings.menuBarShowsWeekly, activeAccount.shouldShowSecondaryQuota {
+            parts.append("\(activeAccount.secondaryQuotaLabel) \(Format.percentRemaining(fromUsed: activeAccount.weeklyUsedPercent))")
+        }
+        if settings.menuBarShowsTokens {
+            parts.append(Format.tokens(activeUsage.billingTokenTotal))
+        }
+        if settings.menuBarShowsCost {
+            parts.append(Format.money(activeUsage.costs.totalCost))
+        }
+
+        return parts.isEmpty ? "CodexHub" : parts.joined(separator: " · ")
     }
 
     var sortedAccounts: [CodexAccount] {
-        accounts.sorted { left, right in
-            if left.label != right.label { return left.label < right.label }
-            return left.email.localizedCaseInsensitiveCompare(right.email) == .orderedAscending
-        }
+        accounts
+    }
+
+    func openDashboardWindow() {
+        dashboardOpenRequest = UUID()
+        loadDashboard(force: false)
     }
 
     var todayByAccountRows: [AccountUsageSummary] {
-        usage.todayByAccount
+        sortedAccountUsageRows(usage.todayByAccount)
+    }
+
+    func sortedAccountUsageRows(_ usageByAccount: [String: UsageAggregate]) -> [AccountUsageSummary] {
+        usageByAccount
             .map { AccountUsageSummary(email: $0.key, aggregate: $0.value) }
-            .sorted { displayName(for: $0.email) < displayName(for: $1.email) }
+            .sorted { left, right in
+                if left.aggregate.billingTokenTotal != right.aggregate.billingTokenTotal {
+                    return left.aggregate.billingTokenTotal > right.aggregate.billingTokenTotal
+                }
+                if left.aggregate.costs.totalCost != right.aggregate.costs.totalCost {
+                    return left.aggregate.costs.totalCost > right.aggregate.costs.totalCost
+                }
+                return displayName(for: left.email) < displayName(for: right.email)
+            }
     }
 
     func refresh(force: Bool) {
-        guard !isRefreshing else { return }
+        guard !isRefreshing || force else { return }
         if !force,
            let lastRefreshDate,
            Date().timeIntervalSince(lastRefreshDate) < minimumRefreshInterval {
             return
         }
+        refreshGeneration += 1
+        let generation = refreshGeneration
         isRefreshing = true
         let useQuotaAPI = settings.quotaAPIEnabled
         workQueue.async {
@@ -96,6 +144,7 @@ final class CodexHubModel: ObservableObject {
             self.attributionStore.seedLegacyAccountIfNeeded(defaultLegacy)
             let usage = self.usageScanner.scan(attribution: self.attributionStore, accounts: accounts)
             DispatchQueue.main.async {
+                guard self.refreshGeneration == generation else { return }
                 self.accounts = accounts
                 self.usage = usage
                 self.quotaAPIStatus = listed.quotaAPIStatus
@@ -112,7 +161,13 @@ final class CodexHubModel: ObservableObject {
     func accountMenuTitle(_ account: CodexAccount) -> String {
         let marker = account.isActive ? "*" : " "
         let accountUsage = usage.todayByAccount[account.email] ?? .zero
-        return "\(marker) \(account.label)  5H \(Format.percentRemaining(fromUsed: account.fiveHourUsedPercent))  W \(Format.percentRemaining(fromUsed: account.weeklyUsedPercent))  \(L.today) \(Format.summary(accountUsage))  \(compactEmail(account.email))"
+        var quotaParts = [
+            "\(account.primaryQuotaLabel) \(Format.percentRemaining(fromUsed: account.fiveHourUsedPercent))"
+        ]
+        if account.shouldShowSecondaryQuota {
+            quotaParts.append("\(account.secondaryQuotaLabel) \(Format.percentRemaining(fromUsed: account.weeklyUsedPercent))")
+        }
+        return "\(marker) \(account.label)  \(quotaParts.joined(separator: "  "))  \(L.today) \(Format.summary(accountUsage))  \(compactEmail(account.email))"
     }
 
     func displayName(for email: String) -> String {
@@ -131,6 +186,7 @@ final class CodexHubModel: ObservableObject {
         guard let target = accounts.first(where: { $0.identity == identity }) else { return }
         guard target.isActive != true else { return }
         guard !isSwitchingAccount else { return }
+        invalidateRefreshResults()
         switchingAccountEmail = target.email
         isRefreshing = true
         DispatchQueue.global(qos: .userInitiated).async {
@@ -156,6 +212,7 @@ final class CodexHubModel: ObservableObject {
 
     func addAccount(mode: LoginMode = .browser) {
         guard !isAddingAccount else { return }
+        invalidateRefreshResults()
         isAddingAccount = true
         isRefreshing = true
         settings.statusMessage = L.accountLoginInProgress
@@ -183,6 +240,7 @@ final class CodexHubModel: ObservableObject {
             return
         }
         guard removingAccountIdentity == nil else { return }
+        invalidateRefreshResults()
         removingAccountIdentity = identity
         DispatchQueue.global(qos: .userInitiated).async {
             let result = self.authService.removeStoredAccount(identity)
@@ -193,6 +251,9 @@ final class CodexHubModel: ObservableObject {
                     self.accounts.removeAll { $0.identity == identity }
                     self.usageDetails = nil
                     self.lastUsageDetailsRefreshDate = nil
+                    self.dashboardSnapshot = .empty
+                    self.lastDashboardRefreshDate = nil
+                    self.dashboardRangeDays = nil
                     self.refresh(force: true)
                 } else {
                     let message = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -213,15 +274,19 @@ final class CodexHubModel: ObservableObject {
         isLoadingDetails = true
         usageDetailsProgress = 0
         usageDetailsProgressText = nil
+        usageDetailsGeneration += 1
+        let generation = usageDetailsGeneration
         let accounts = self.accounts
         workQueue.async {
             let details = self.usageScanner.scanDetails(attribution: self.attributionStore, accounts: accounts) { progress in
                 DispatchQueue.main.async {
+                    guard self.usageDetailsGeneration == generation else { return }
                     self.usageDetailsProgress = progress.fraction
                     self.usageDetailsProgressText = L.usageScanProgress(completed: progress.completedFiles, total: progress.totalFiles)
                 }
             }
             DispatchQueue.main.async {
+                guard self.usageDetailsGeneration == generation else { return }
                 self.usageDetails = details
                 self.lastUsageDetailsRefreshDate = Date()
                 self.isLoadingDetails = false
@@ -230,6 +295,46 @@ final class CodexHubModel: ObservableObject {
                 if let error = details.lastError {
                     self.lastError = error
                 }
+            }
+        }
+    }
+
+    func loadDashboard(force: Bool, days: Int = 30) {
+        if dashboardSnapshot.isEmpty == false && !force {
+            if let lastDashboardRefreshDate,
+               dashboardRangeDays == days,
+               Date().timeIntervalSince(lastDashboardRefreshDate) < minimumDashboardRefreshInterval {
+                return
+            }
+        }
+        guard !isLoadingDashboard else { return }
+        isLoadingDashboard = true
+        dashboardProgress = 0
+        dashboardProgressText = nil
+        dashboardGeneration += 1
+        let generation = dashboardGeneration
+        let accounts = self.accounts
+        workQueue.async {
+            let snapshot = self.usageScanner.scanDashboard(
+                attribution: self.attributionStore,
+                accounts: accounts,
+                historyStore: self.usageHistoryStore,
+                days: days
+            ) { progress in
+                DispatchQueue.main.async {
+                    guard self.dashboardGeneration == generation else { return }
+                    self.dashboardProgress = progress.fraction
+                    self.dashboardProgressText = L.usageScanProgress(completed: progress.completedFiles, total: progress.totalFiles)
+                }
+            }
+            DispatchQueue.main.async {
+                guard self.dashboardGeneration == generation else { return }
+                self.dashboardSnapshot = snapshot
+                self.lastDashboardRefreshDate = Date()
+                self.dashboardRangeDays = days
+                self.isLoadingDashboard = false
+                self.dashboardProgress = nil
+                self.dashboardProgressText = nil
             }
         }
     }
@@ -246,8 +351,19 @@ final class CodexHubModel: ObservableObject {
         attributionStore.resetHistory(currentEmail: activeAccount?.email)
         usageDetails = nil
         lastUsageDetailsRefreshDate = nil
+        dashboardSnapshot = .empty
+        lastDashboardRefreshDate = nil
+        dashboardRangeDays = nil
         settings.statusMessage = L.attributionHistoryReset
         refresh(force: true)
+    }
+
+    func clearDashboardHistory() {
+        usageHistoryStore.clear()
+        dashboardSnapshot = .empty
+        lastDashboardRefreshDate = nil
+        dashboardRangeDays = nil
+        settings.statusMessage = L.dashboardHistoryCleared
     }
 
     private func refreshUsageDetailsIfStale() {
@@ -258,44 +374,56 @@ final class CodexHubModel: ObservableObject {
     }
 
     private func evaluateAutomation() {
-        guard let active = activeAccount, let used = active.usagePercent else { return }
-        let remaining = max(0, min(100, 100 - used))
+        let policy = UsageAutomationPolicy(
+            accounts: accounts,
+            reminderEnabled: settings.usageReminderEnabled,
+            reminderThreshold: settings.reminderThreshold,
+            autoSwitchEnabled: settings.autoSwitchEnabled,
+            autoSwitchThreshold: settings.autoSwitchThreshold,
+            date: Date(),
+            calendar: .current
+        )
 
-        if settings.usageReminderEnabled && remaining <= settings.reminderThreshold {
-            let day = Int(Calendar.current.startOfDay(for: Date()).timeIntervalSince1970)
-            let signature = "\(active.identity)-\(settings.reminderThreshold)-\(day)"
-            if signature != lastReminderSignature {
-                lastReminderSignature = signature
-                sendUsageReminder(account: active, used: used, remaining: remaining)
-            }
+        if let reminder = policy.reminder(excluding: lastReminderSignature) {
+            lastReminderSignature = reminder.signature
+            sendUsageReminder(account: reminder.account, used: reminder.used, remaining: reminder.remaining)
         }
 
-        let switchThreshold = settings.autoSwitchThreshold
-        guard settings.autoSwitchEnabled && remaining <= switchThreshold else { return }
-        let candidates = accounts
-            .filter { !$0.isActive }
-            .compactMap { account -> (CodexAccount, Int)? in
-                guard let candidateRemaining = Format.remainingPercent(fromUsed: account.fiveHourUsedPercent) else { return nil }
-                return (account, candidateRemaining)
-            }
-            .filter { $0.1 > remaining }
-            .filter { $0.1 > switchThreshold }
-            .sorted { left, right in
-                if left.1 != right.1 { return left.1 > right.1 }
-                return left.0.label < right.0.label
-            }
-        guard let best = candidates.first else { return }
-        let signature = "\(active.email):\(remaining)->\(best.0.email):\(best.1)-\(switchThreshold)"
-        guard signature != lastAutoSwitchSignature else { return }
-        lastAutoSwitchSignature = signature
-        promptAutoSwitch(from: active, to: best.0, activeRemaining: remaining, candidateRemaining: best.1)
+        if let suggestion = policy.switchSuggestion(excluding: lastAutoSwitchSignature) {
+            lastAutoSwitchSignature = suggestion.signature
+            promptAutoSwitch(
+                from: suggestion.active,
+                to: suggestion.candidate,
+                activeRemaining: suggestion.activeRemaining,
+                candidateRemaining: suggestion.candidateRemaining
+            )
+        }
+    }
+
+    private func invalidateRefreshResults() {
+        refreshGeneration += 1
+        usageDetailsGeneration += 1
+        dashboardGeneration += 1
+        isLoadingDetails = false
+        usageDetailsProgress = nil
+        usageDetailsProgressText = nil
+        isLoadingDashboard = false
+        dashboardProgress = nil
+        dashboardProgressText = nil
     }
 
     private func promptAutoSwitch(from active: CodexAccount, to candidate: CodexAccount, activeRemaining: Int, candidateRemaining: Int) {
         let alert = NSAlert()
         alert.alertStyle = .informational
         alert.messageText = L.switchCodexAccount
-        alert.informativeText = L.autoSwitchMessage(activeAccount: active.email, activeRemaining: activeRemaining, candidateAccount: candidate.email, candidateRemaining: candidateRemaining)
+        alert.informativeText = L.autoSwitchMessage(
+            activeAccount: active.email,
+            activeQuotaLabel: active.primaryQuotaLabel,
+            activeRemaining: activeRemaining,
+            candidateAccount: candidate.email,
+            candidateQuotaLabel: candidate.primaryQuotaLabel,
+            candidateRemaining: candidateRemaining
+        )
         alert.addButton(withTitle: L.switchAccount)
         alert.addButton(withTitle: L.notNow)
         NSApp.activate(ignoringOtherApps: true)
@@ -307,7 +435,12 @@ final class CodexHubModel: ObservableObject {
     private func sendUsageReminder(account: CodexAccount, used: Int, remaining: Int) {
         let content = UNMutableNotificationContent()
         content.title = L.usageReminderTitle
-        content.body = L.usageReminderBody(accountLabel: account.label, used: used, remaining: remaining)
+        content.body = L.usageReminderBody(
+            accountLabel: account.label,
+            quotaLabel: account.primaryQuotaLabel,
+            used: used,
+            remaining: remaining
+        )
         content.sound = .default
         let identifier = "codexhub-usage-\(stableIdentifierComponent(account.identity))-\(settings.reminderThreshold)"
         let request = UNNotificationRequest(identifier: identifier, content: content, trigger: nil)

@@ -4,15 +4,20 @@ import Foundation
 
 final class CodexAuthService {
     private let accountStore: CodexAccountStore
-    private let appServerCacheURL: URL = {
-        let appSupport = LocalStorageSecurity.codexHubApplicationSupportDirectory()
-        return appSupport.appendingPathComponent("app-server-quota-cache.json")
-    }()
+    private let appServerCacheURL: URL
+    private let processRunner: ProcessRunner
 
-    init(accountStore: CodexAccountStore = CodexAccountStore()) {
+    init(
+        accountStore: CodexAccountStore = CodexAccountStore(),
+        appServerCacheURL: URL? = nil,
+        processRunner: ProcessRunner = .live
+    ) {
         self.accountStore = accountStore
-        if FileManager.default.fileExists(atPath: appServerCacheURL.path) {
-            try? LocalStorageSecurity.setPrivateFilePermissions(appServerCacheURL)
+        let appSupport = LocalStorageSecurity.codexHubApplicationSupportDirectory()
+        self.appServerCacheURL = appServerCacheURL ?? appSupport.appendingPathComponent("app-server-quota-cache.json")
+        self.processRunner = processRunner
+        if FileManager.default.fileExists(atPath: self.appServerCacheURL.path) {
+            try? LocalStorageSecurity.setPrivateFilePermissions(self.appServerCacheURL)
         }
     }
 
@@ -228,41 +233,6 @@ final class CodexAuthService {
         case failed
     }
 
-    private struct AppServerResponse: Decodable {
-        let id: Int?
-        let result: AppServerRateLimitResult?
-    }
-
-    private struct AppServerRateLimitResult: Decodable {
-        let rateLimits: AppServerRateLimitSnapshot?
-        let rateLimitsByLimitId: [String: AppServerRateLimitSnapshot]?
-    }
-
-    private struct AppServerRateLimitSnapshot: Decodable {
-        let primary: AppServerRateLimitWindowPayload?
-        let secondary: AppServerRateLimitWindowPayload?
-    }
-
-    private struct AppServerRateLimitWindowPayload: Decodable {
-        let usedPercent: Double
-        let resetsAt: Double?
-
-        enum CodingKeys: String, CodingKey {
-            case usedPercent
-            case resetsAt
-            case usedPercentSnake = "used_percent"
-            case resetsAtSnake = "resets_at"
-        }
-
-        init(from decoder: Decoder) throws {
-            let container = try decoder.container(keyedBy: CodingKeys.self)
-            usedPercent = try container.decodeIfPresent(Double.self, forKey: .usedPercent)
-                ?? container.decode(Double.self, forKey: .usedPercentSnake)
-            resetsAt = try container.decodeIfPresent(Double.self, forKey: .resetsAt)
-                ?? container.decodeIfPresent(Double.self, forKey: .resetsAtSnake)
-        }
-    }
-
     private struct AppServerLookup {
         let limits: AppServerRateLimits
         let fromCache: Bool
@@ -338,7 +308,10 @@ final class CodexAuthService {
         process.standardInput = stdin
         process.standardOutput = stdout
         process.standardError = stderr
-        var environment = processEnvironment(prependingExecutableDirectory: codexPath)
+        var environment = CodexProcessEnvironment.make(
+            prependingExecutableDirectory: codexPath,
+            includeBundledCodexPath: true
+        )
         if let codexHome {
             environment["CODEX_HOME"] = codexHome.path
         }
@@ -394,9 +367,12 @@ final class CodexAuthService {
             }
             stdout.fileHandleForReading.readabilityHandler = nil
             stderr.fileHandleForReading.readabilityHandler = nil
-            if !timedOut, let resolvedLimits {
-                saveAppServerCache(resolvedLimits, accountIdentity: accountIdentity)
-                return AppServerLookup(limits: resolvedLimits, fromCache: false)
+            lock.lock()
+            let limits = resolvedLimits
+            lock.unlock()
+            if !timedOut, let limits {
+                saveAppServerCache(limits, accountIdentity: accountIdentity)
+                return AppServerLookup(limits: limits, fromCache: false)
             }
             return loadAppServerCache(accountIdentity: accountIdentity).map { AppServerLookup(limits: $0, fromCache: true) }
         } catch {
@@ -426,8 +402,9 @@ final class CodexAuthService {
                       snapshot.primary != nil || snapshot.secondary != nil else { continue }
                 return AppServerLookup(
                     limits: AppServerRateLimits(
-                        primary: snapshot.primary.map(makeAppServerWindow),
-                        secondary: snapshot.secondary.map(makeAppServerWindow)
+                        primary: snapshot.primary.map { AppServerRateLimitParser.makeWindow($0, fallbackKind: .fiveHour) },
+                        secondary: snapshot.secondary.map { AppServerRateLimitParser.makeWindow($0, fallbackKind: .weekly) },
+                        planType: nil
                     ),
                     fromCache: true
                 )
@@ -476,16 +453,7 @@ final class CodexAuthService {
     }
 
     private func parseAppServerRateLimitsLine(_ line: String) -> AppServerRateLimits? {
-        let decoder = JSONDecoder()
-        guard let data = line.data(using: .utf8),
-              let response = try? decoder.decode(AppServerResponse.self, from: data),
-              response.id == 2 else { return nil }
-        let snapshot = response.result?.rateLimitsByLimitId?["codex"] ?? response.result?.rateLimits
-        guard let snapshot else { return nil }
-        return AppServerRateLimits(
-            primary: snapshot.primary.map(makeAppServerWindow),
-            secondary: snapshot.secondary.map(makeAppServerWindow)
-        )
+        AppServerRateLimitParser.parseJSONRPCLine(line)
     }
 
     private func loadAppServerCache(accountIdentity: String) -> AppServerRateLimits? {
@@ -516,13 +484,6 @@ final class CodexAuthService {
         return [:]
     }
 
-    private func makeAppServerWindow(_ payload: AppServerRateLimitWindowPayload) -> AppServerRateLimitWindow {
-        let used = Int(payload.usedPercent.rounded())
-        let clampedUsed = max(0, min(100, used))
-        let reset = payload.resetsAt.map { Date(timeIntervalSince1970: $0) }
-        return AppServerRateLimitWindow(displayPercent: clampedUsed, resetsAt: reset)
-    }
-
     private func codexCLIPath() -> String? {
         let candidates = [
             "/Applications/Codex.app/Contents/Resources/codex",
@@ -538,82 +499,16 @@ final class CodexAuthService {
         return result.status == 0 && FileManager.default.isExecutableFile(atPath: path) ? path : nil
     }
 
-    private func processEnvironment(prependingExecutableDirectory executable: String? = nil) -> [String: String] {
-        var environment = ProcessInfo.processInfo.environment
-        let currentPath = environment["PATH"] ?? ""
-        var pathEntries: [String] = []
-        if let executable {
-            pathEntries.append(URL(fileURLWithPath: executable).deletingLastPathComponent().path)
-        }
-        pathEntries.append(contentsOf: [
-            "\(NSHomeDirectory())/.local/bin",
-            "/opt/homebrew/bin",
-            "/usr/local/bin",
-            "/usr/bin",
-            "/bin",
-            "/usr/sbin",
-            "/sbin"
-        ])
-        if !currentPath.isEmpty {
-            pathEntries.append(currentPath)
-        }
-        environment["PATH"] = pathEntries.joined(separator: ":")
-        let bundledCodex = "/Applications/Codex.app/Contents/Resources/codex"
-        if FileManager.default.isExecutableFile(atPath: bundledCodex) {
-            environment["CODEX_CLI_PATH"] = bundledCodex
-        }
-        return environment
-    }
-
     private func run(_ executable: String, _ args: [String], timeout: TimeInterval) -> CommandResult {
-        let process = Process()
-        let pipe = Pipe()
-        let lock = NSLock()
-        var output = Data()
-        process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = args
-        process.standardOutput = pipe
-        process.standardError = pipe
-        process.environment = processEnvironment(prependingExecutableDirectory: executable)
-        pipe.fileHandleForReading.readabilityHandler = { handle in
-            let data = handle.availableData
-            guard data.isEmpty == false else { return }
-            lock.lock()
-            output.append(data)
-            lock.unlock()
-        }
-        do {
-            try process.run()
-            let semaphore = DispatchSemaphore(value: 0)
-            DispatchQueue.global(qos: .utility).async {
-                process.waitUntilExit()
-                semaphore.signal()
-            }
-            if semaphore.wait(timeout: .now() + timeout) == .timedOut {
-                if process.isRunning {
-                    process.terminate()
-                }
-                if semaphore.wait(timeout: .now() + 1) == .timedOut, process.isRunning {
-                    kill(process.processIdentifier, SIGKILL)
-                    _ = semaphore.wait(timeout: .now() + 1)
-                }
-                pipe.fileHandleForReading.readabilityHandler = nil
-                let text = drainedOutput(from: pipe, accumulated: output, lock: lock)
-                return CommandResult(status: 124, output: L.text(ko: "명령 실행 시간이 초과됐습니다", en: "Command timed out") + ": \(URL(fileURLWithPath: executable).lastPathComponent) \(args.joined(separator: " "))\n\(text)")
-            }
-            pipe.fileHandleForReading.readabilityHandler = nil
-            return CommandResult(status: process.terminationStatus, output: drainedOutput(from: pipe, accumulated: output, lock: lock))
-        } catch {
-            pipe.fileHandleForReading.readabilityHandler = nil
-            return CommandResult(status: 127, output: error.localizedDescription)
-        }
-    }
-
-    private func drainedOutput(from pipe: Pipe, accumulated: Data, lock: NSLock) -> String {
-        lock.lock()
-        var data = accumulated
-        lock.unlock()
-        data.append(pipe.fileHandleForReading.readDataToEndOfFile())
-        return String(data: data, encoding: .utf8) ?? ""
+        let environment = CodexProcessEnvironment.make(
+            prependingExecutableDirectory: executable,
+            includeBundledCodexPath: true
+        )
+        let result = processRunner.run(executable, args, timeout, environment)
+        guard result.status == 124 else { return result }
+        return CommandResult(
+            status: result.status,
+            output: "\(result.output): \(URL(fileURLWithPath: executable).lastPathComponent) \(args.joined(separator: " "))"
+        )
     }
 }

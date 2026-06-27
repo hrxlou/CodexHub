@@ -137,30 +137,54 @@ struct AccountCardView: View {
         } label: {
             VStack(alignment: .leading, spacing: 7) {
                 HStack(alignment: .center) {
+                    HStack(alignment: .firstTextBaseline, spacing: 4) {
+                        Text(account.label)
+                            .font(.system(size: 16, weight: .semibold, design: .rounded))
+                            .foregroundStyle(account.isActive ? activeGreen : Color.secondary)
+                        if let planLabel = account.planLabel {
+                            Text(planLabel)
+                                .font(.system(size: 8, weight: .semibold, design: .rounded))
+                                .foregroundStyle(.secondary.opacity(0.68))
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.80)
+                        }
+                    }
+                    .frame(height: 24, alignment: .center)
+                    Spacer()
                     Text(account.isActive ? L.active : L.switchAccount)
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(account.isActive ? Color.white : Color.primary)
                         .padding(.horizontal, 9)
                         .padding(.vertical, 4)
+                        .frame(minWidth: 48, minHeight: 24)
                         .background(account.isActive ? activeGreen : Color.primary.opacity(hovering ? 0.10 : 0.06))
                         .clipShape(Capsule())
-                    Spacer()
-                    Text(account.label)
-                        .font(.system(size: 16, weight: .semibold, design: .rounded))
-                        .foregroundStyle(account.isActive ? activeGreen : Color.secondary)
                 }
+                .frame(height: 24)
 
                 Text(account.email)
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
+                    .frame(height: 14, alignment: .leading)
 
                 VStack(spacing: 5) {
-                    quotaRow(label: "5H", percent: Format.percentRemaining(fromUsed: account.fiveHourUsedPercent), reset: Format.resetTime(from: account.fiveHourUsage))
-                    quotaRow(label: "W", percent: Format.percentRemaining(fromUsed: account.weeklyUsedPercent), reset: Format.weeklyResetDate(from: account.weeklyUsage))
+                    quotaRow(
+                        label: account.primaryQuotaLabel,
+                        percent: Format.percentRemaining(fromUsed: account.fiveHourUsedPercent),
+                        reset: Format.quotaReset(from: account.fiveHourUsage, kind: account.fiveHourQuotaKind ?? .fiveHour)
+                    )
+                    if account.shouldShowSecondaryQuota {
+                        quotaRow(
+                            label: account.secondaryQuotaLabel,
+                            percent: Format.percentRemaining(fromUsed: account.weeklyUsedPercent),
+                            reset: Format.quotaReset(from: account.weeklyUsage, kind: account.weeklyQuotaKind ?? .weekly)
+                        )
+                    }
                 }
-                .padding(.top, 7)
+                .padding(.top, 6)
+                .frame(height: 51, alignment: .top)
             }
             .padding(11)
             .frame(maxWidth: .infinity, minHeight: 126, alignment: .topLeading)
@@ -182,7 +206,9 @@ struct AccountCardView: View {
             Text(label)
                 .font(.system(size: 12, weight: .semibold, design: .rounded))
                 .foregroundStyle(.secondary)
-                .frame(width: 21, height: 22, alignment: .leading)
+                .lineLimit(1)
+                .minimumScaleFactor(0.70)
+                .frame(width: 28, height: 22, alignment: .leading)
             Text(percent)
                 .font(.system(size: 16, weight: .semibold, design: .rounded))
                 .foregroundStyle(account.isActive ? activeGreen : Color.primary.opacity(0.78))
@@ -191,7 +217,7 @@ struct AccountCardView: View {
             Spacer()
             Text(reset)
                 .font(.system(size: 11, weight: .semibold, design: .rounded))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.secondary.opacity(0.88))
                 .monospacedDigit()
                 .minimumScaleFactor(0.92)
                 .frame(width: 48, height: 22, alignment: .trailing)

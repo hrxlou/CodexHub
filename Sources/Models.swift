@@ -13,8 +13,10 @@ struct CodexAccount: Codable, Equatable {
     let plan: String
     let fiveHourUsage: String
     let fiveHourUsedPercent: Int?
+    let fiveHourQuotaKind: AppServerRateLimitWindow.Kind?
     let weeklyUsage: String
     let weeklyUsedPercent: Int?
+    let weeklyQuotaKind: AppServerRateLimitWindow.Kind?
     let lastActivity: String
     let lastUsedAt: Date?
     let isActive: Bool
@@ -27,8 +29,10 @@ struct CodexAccount: Codable, Equatable {
         plan: String,
         fiveHourUsage: String,
         fiveHourUsedPercent: Int?,
+        fiveHourQuotaKind: AppServerRateLimitWindow.Kind? = nil,
         weeklyUsage: String,
         weeklyUsedPercent: Int?,
+        weeklyQuotaKind: AppServerRateLimitWindow.Kind? = nil,
         lastActivity: String,
         lastUsedAt: Date? = nil,
         isActive: Bool
@@ -40,8 +44,10 @@ struct CodexAccount: Codable, Equatable {
         self.plan = plan
         self.fiveHourUsage = fiveHourUsage
         self.fiveHourUsedPercent = fiveHourUsedPercent
+        self.fiveHourQuotaKind = fiveHourQuotaKind
         self.weeklyUsage = weeklyUsage
         self.weeklyUsedPercent = weeklyUsedPercent
+        self.weeklyQuotaKind = weeklyQuotaKind
         self.lastActivity = lastActivity
         self.lastUsedAt = lastUsedAt
         self.isActive = isActive
@@ -56,9 +62,52 @@ struct CodexAccount: Codable, Equatable {
         return String(first).uppercased()
     }
 
+    var planLabel: String? {
+        let normalized = plan
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .replacingOccurrences(of: "chatgpt_", with: "")
+            .replacingOccurrences(of: "chatgpt-", with: "")
+        guard normalized.isEmpty == false, normalized != "unknown" else { return nil }
+        if normalized.contains("education") || normalized.contains("edu") {
+            return "edu"
+        }
+        if normalized.contains("enterprise") {
+            return "ent"
+        }
+        if normalized.contains("team") || normalized.contains("business") {
+            return "team"
+        }
+        if normalized.contains("plus") {
+            return "plus"
+        }
+        if normalized.contains("pro") {
+            return "pro"
+        }
+        if normalized.contains("go") {
+            return "go"
+        }
+        if normalized.contains("free") {
+            return "free"
+        }
+        return String(normalized.prefix(8))
+    }
+
     var usagePercent: Int? {
         guard let used = fiveHourUsedPercent else { return nil }
         return max(0, min(100, used))
+    }
+
+    var primaryQuotaLabel: String {
+        (fiveHourQuotaKind ?? .fiveHour).label
+    }
+
+    var secondaryQuotaLabel: String {
+        (weeklyQuotaKind ?? .weekly).label
+    }
+
+    var shouldShowSecondaryQuota: Bool {
+        weeklyUsedPercent != nil
     }
 
     var weeklyPercent: Int? {
@@ -67,16 +116,20 @@ struct CodexAccount: Codable, Equatable {
     }
 
     func applyingAppServerRateLimits(_ limits: AppServerRateLimits) -> CodexAccount {
-        CodexAccount(
+        let nextFiveHourQuotaKind = limits.primary?.displayKind(fallback: .fiveHour) ?? fiveHourQuotaKind
+        let shouldClearSecondary = limits.secondary == nil && nextFiveHourQuotaKind == .monthly
+        return CodexAccount(
             selector: selector,
             identity: identity,
             email: email,
             alias: alias,
-            plan: plan,
-            fiveHourUsage: limits.primary?.displayText(kind: .fiveHour) ?? fiveHourUsage,
+            plan: limits.planType ?? plan,
+            fiveHourUsage: limits.primary?.displayText(fallbackKind: .fiveHour) ?? fiveHourUsage,
             fiveHourUsedPercent: limits.primary?.displayPercent ?? fiveHourUsedPercent,
-            weeklyUsage: limits.secondary?.displayText(kind: .weekly) ?? weeklyUsage,
-            weeklyUsedPercent: limits.secondary?.displayPercent ?? weeklyUsedPercent,
+            fiveHourQuotaKind: nextFiveHourQuotaKind,
+            weeklyUsage: limits.secondary?.displayText(fallbackKind: .weekly) ?? (shouldClearSecondary ? "-" : weeklyUsage),
+            weeklyUsedPercent: limits.secondary?.displayPercent ?? (shouldClearSecondary ? nil : weeklyUsedPercent),
+            weeklyQuotaKind: limits.secondary?.displayKind(fallback: .weekly) ?? (shouldClearSecondary ? nil : weeklyQuotaKind),
             lastActivity: lastActivity,
             lastUsedAt: lastUsedAt,
             isActive: isActive
@@ -92,8 +145,10 @@ struct CodexAccount: Codable, Equatable {
             plan: plan,
             fiveHourUsage: fiveHourUsage,
             fiveHourUsedPercent: fiveHourUsedPercent,
+            fiveHourQuotaKind: fiveHourQuotaKind,
             weeklyUsage: weeklyUsage,
             weeklyUsedPercent: weeklyUsedPercent,
+            weeklyQuotaKind: weeklyQuotaKind,
             lastActivity: lastActivity,
             lastUsedAt: lastUsedAt,
             isActive: active
@@ -109,8 +164,10 @@ struct CodexAccount: Codable, Equatable {
             plan: plan,
             fiveHourUsage: fiveHourUsedPercent == nil ? "Unavailable" : fiveHourUsage,
             fiveHourUsedPercent: fiveHourUsedPercent,
+            fiveHourQuotaKind: fiveHourQuotaKind,
             weeklyUsage: weeklyUsedPercent == nil || weeklyUsage == "-" ? "Unavailable" : weeklyUsage,
             weeklyUsedPercent: weeklyUsedPercent,
+            weeklyQuotaKind: weeklyQuotaKind,
             lastActivity: lastActivity,
             lastUsedAt: lastUsedAt,
             isActive: isActive
@@ -121,20 +178,81 @@ struct CodexAccount: Codable, Equatable {
 struct AppServerRateLimits: Codable {
     let primary: AppServerRateLimitWindow?
     let secondary: AppServerRateLimitWindow?
+    let planType: String?
+
+    init(primary: AppServerRateLimitWindow?, secondary: AppServerRateLimitWindow?, planType: String? = nil) {
+        self.primary = primary
+        self.secondary = secondary
+        self.planType = planType
+    }
 }
 
 struct AppServerRateLimitWindow: Codable {
-    enum Kind {
+    enum Kind: String, Codable {
         case fiveHour
         case weekly
+        case monthly
+        case unknown
+
+        var label: String {
+            switch self {
+            case .fiveHour: return "5h"
+            case .weekly: return "1w"
+            case .monthly: return "1mo"
+            case .unknown: return "-"
+            }
+        }
+
+        var usesDateReset: Bool {
+            self != .fiveHour
+        }
+
+        static func inferred(windowDurationMinutes: Double?, resetsAt: Date?, observedAt: Date = Date(), fallback: Kind) -> Kind {
+            if let windowDurationMinutes {
+                if windowDurationMinutes >= 28 * 24 * 60 {
+                    return .monthly
+                }
+                if windowDurationMinutes >= 6 * 24 * 60 {
+                    return .weekly
+                }
+                if windowDurationMinutes > 0 {
+                    return .fiveHour
+                }
+            }
+            guard fallback == .unknown else { return fallback }
+            guard let resetsAt else { return fallback }
+            let remaining = resetsAt.timeIntervalSince(observedAt)
+            guard remaining > 0 else { return fallback }
+            if remaining >= 14 * 24 * 60 * 60 {
+                return .monthly
+            }
+            if remaining >= 24 * 60 * 60 {
+                return .weekly
+            }
+            return .fiveHour
+        }
     }
 
     let displayPercent: Int
     let resetsAt: Date?
+    let kind: Kind?
+    let windowDurationMinutes: Double?
 
-    func displayText(kind: Kind) -> String {
+    init(displayPercent: Int, resetsAt: Date?, kind: Kind? = nil, windowDurationMinutes: Double? = nil) {
+        self.displayPercent = displayPercent
+        self.resetsAt = resetsAt
+        self.kind = kind
+        self.windowDurationMinutes = windowDurationMinutes
+    }
+
+    func displayKind(fallback: Kind) -> Kind {
+        kind ?? Kind.inferred(windowDurationMinutes: windowDurationMinutes, resetsAt: resetsAt, fallback: fallback)
+    }
+
+    func displayText(fallbackKind: Kind) -> String {
+        let displayKind = displayKind(fallback: fallbackKind)
         if let resetsAt {
-            let reset = kind == .weekly ? Format.shortDate(resetsAt) : Format.time(resetsAt)
+            let reset = displayKind.usesDateReset ? Format.shortDate(resetsAt) : Format.time(resetsAt)
             return "\(displayPercent)% (\(reset))"
         }
         return "\(displayPercent)%"
@@ -255,12 +373,24 @@ struct ModelPricingCatalog: Codable, Equatable {
     )
 
     static func load() -> ModelPricingCatalog {
-        guard let url = Bundle.main.url(forResource: "PriceBook", withExtension: "json"),
+        guard let url = priceBookURL(),
               let data = try? Data(contentsOf: url),
               let catalog = try? JSONDecoder().decode(PriceBook.self, from: data).catalog else {
             return .fallback
         }
         return catalog
+    }
+
+    private static func priceBookURL() -> URL? {
+        #if SWIFT_PACKAGE
+        if let url = Bundle.module.url(forResource: "PriceBook", withExtension: "json") {
+            return url
+        }
+        if let url = Bundle.module.url(forResource: "PriceBook", withExtension: "json", subdirectory: "Resources") {
+            return url
+        }
+        #endif
+        return Bundle.main.url(forResource: "PriceBook", withExtension: "json")
     }
 
     func rates(for model: String?) -> ModelRates {
@@ -395,6 +525,53 @@ struct UsageDetailSnapshot {
     let lastError: String?
 }
 
+struct DashboardSnapshot {
+    let total: UsageAggregate
+    let dailySeries: [DashboardSeriesPoint]
+    let accountBreakdown: [DashboardBreakdown]
+    let modelBreakdown: [DashboardBreakdown]
+    let activitySeries: [DashboardSeriesPoint]
+    let calendarHeatmap: [DashboardHeatmapDay]
+    let scannedFiles: Int
+    let lastUpdatedAt: Date?
+
+    static let empty = DashboardSnapshot(
+        total: .zero,
+        dailySeries: [],
+        accountBreakdown: [],
+        modelBreakdown: [],
+        activitySeries: [],
+        calendarHeatmap: [],
+        scannedFiles: 0,
+        lastUpdatedAt: nil
+    )
+
+    var isEmpty: Bool {
+        total.isZero && dailySeries.allSatisfy { $0.aggregate.isZero }
+    }
+}
+
+struct DashboardSeriesPoint: Identifiable, Equatable {
+    let date: Date
+    let aggregate: UsageAggregate
+
+    var id: Date { date }
+}
+
+struct DashboardBreakdown: Identifiable, Equatable {
+    let label: String
+    let aggregate: UsageAggregate
+
+    var id: String { label }
+}
+
+struct DashboardHeatmapDay: Identifiable, Equatable {
+    let date: Date
+    let aggregate: UsageAggregate
+
+    var id: Date { date }
+}
+
 struct AttributionEvent: Codable, Equatable {
     let timestamp: Date
     let email: String
@@ -448,6 +625,10 @@ struct Format {
             return normalizedWeeklyDate(String(inner[range.upperBound...]))
         }
         return normalizedWeeklyDate(inner)
+    }
+
+    static func quotaReset(from usage: String, kind: AppServerRateLimitWindow.Kind) -> String {
+        kind.usesDateReset ? weeklyResetDate(from: usage) : resetTime(from: usage)
     }
 
     static func time(_ date: Date) -> String {
@@ -523,6 +704,32 @@ struct Format {
         return "\(value)"
     }
 
+    static func preciseTokens(_ value: Int) -> String {
+        let absValue = abs(value)
+        if AppLanguage.current == .english {
+            if absValue >= 1_000_000_000 {
+                return fixedCompact(Double(value) / 1_000_000_000.0, suffix: "b", decimals: 2)
+            }
+            if absValue >= 1_000_000 {
+                return fixedCompact(Double(value) / 1_000_000.0, suffix: "m", decimals: 2)
+            }
+            if absValue >= 1_000 {
+                return fixedCompact(Double(value) / 1_000.0, suffix: "k", decimals: 1)
+            }
+            return "\(value)"
+        }
+        if absValue >= 100_000_000 {
+            return fixedCompact(Double(value) / 100_000_000.0, suffix: "억", decimals: 2)
+        }
+        if absValue >= 10_000 {
+            return fixedCompact(Double(value) / 10_000.0, suffix: "만", decimals: 1)
+        }
+        if absValue >= 1_000 {
+            return fixedCompact(Double(value) / 1_000.0, suffix: "천", decimals: 1)
+        }
+        return "\(value)"
+    }
+
     static func money(_ value: Double) -> String {
         String(format: "$%.2f", value)
     }
@@ -560,5 +767,19 @@ struct Format {
             .replacingOccurrences(of: "0+$", with: "", options: .regularExpression)
             .replacingOccurrences(of: "\\.$", with: "", options: .regularExpression)
         return trimmed + suffix
+    }
+}
+
+private extension Format {
+    static func fixedCompact(_ value: Double, suffix: String, decimals: Int) -> String {
+        let format = "%.\(decimals)f"
+        var text = String(format: format, value)
+        while text.contains(".") && text.last == "0" {
+            text.removeLast()
+        }
+        if text.last == "." {
+            text.removeLast()
+        }
+        return "\(text)\(suffix)"
     }
 }

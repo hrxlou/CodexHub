@@ -19,6 +19,11 @@ struct AccountLoginResult {
 final class CodexAccountStore {
     private let fileManager = FileManager.default
     private let lock = NSLock()
+    private let processRunner: ProcessRunner
+
+    init(processRunner: ProcessRunner = .live) {
+        self.processRunner = processRunner
+    }
 
     private var codexHomeURL: URL {
         let environment = ProcessInfo.processInfo.environment
@@ -158,8 +163,7 @@ final class CodexAccountStore {
             let previousRegistry = try readRegistryLocked()
             let previousAuthExisted = fileManager.fileExists(atPath: authURL.path)
             let previousAuthData = previousAuthExisted ? try Data(contentsOf: authURL) : nil
-            guard let accounts = previousRegistry["accounts"] as? [[String: Any]],
-                  accounts.contains(where: { ($0["account_key"] as? String) == identity }) else {
+            guard previousRegistry.accounts.contains(where: { $0.accountKey == identity }) else {
                 return CommandResult(status: 1, output: L.text(ko: "계정을 찾지 못했습니다", en: "Account was not found"))
             }
             let snapshotURL = authSnapshotURL(for: identity)
@@ -195,14 +199,10 @@ final class CodexAccountStore {
         do {
             var registry = try readRegistryLocked()
             let originalRegistry = registry
-            if (registry["active_account_key"] as? String) == identity {
+            if registry.activeAccountKey == identity {
                 return CommandResult(status: 1, output: L.text(ko: "활성 계정은 삭제할 수 없습니다", en: "The active account cannot be removed"))
             }
-            guard let accounts = registry["accounts"] as? [[String: Any]] else {
-                return CommandResult(status: 1, output: L.text(ko: "계정 레지스트리를 읽지 못했습니다", en: "Account registry could not be read"))
-            }
-            let updated = accounts.filter { ($0["account_key"] as? String) != identity }
-            guard updated.count != accounts.count else {
+            guard let removeIndex = registry.accounts.firstIndex(where: { $0.accountKey == identity }) else {
                 return CommandResult(status: 1, output: L.text(ko: "계정을 찾지 못했습니다", en: "Account was not found"))
             }
 
@@ -216,7 +216,7 @@ final class CodexAccountStore {
                 tombstoneURL = tombstone
             }
 
-            registry["accounts"] = updated
+            registry.accounts.remove(at: removeIndex)
             do {
                 try writeRegistryLocked(registry)
             } catch {
@@ -248,22 +248,10 @@ final class CodexAccountStore {
         defer { lock.unlock() }
         do {
             var registry = try readRegistryLocked()
-            guard var accounts = registry["accounts"] as? [[String: Any]],
-                  let existingIndex = accounts.firstIndex(where: { ($0["account_key"] as? String) == identity }) else {
+            guard let existingIndex = registry.accounts.firstIndex(where: { $0.accountKey == identity }) else {
                 return
             }
-            var account = accounts[existingIndex]
-            var usage = account["last_usage"] as? [String: Any] ?? [:]
-            if let primary = limits.primary {
-                usage["primary"] = usageSnapshot(from: primary)
-            }
-            if let secondary = limits.secondary {
-                usage["secondary"] = usageSnapshot(from: secondary)
-            }
-            usage["updated_at"] = Int(Date().timeIntervalSince1970)
-            account["last_usage"] = usage
-            accounts[existingIndex] = account
-            registry["accounts"] = accounts
+            registry.accounts[existingIndex].updateUsage(limits)
             try writeRegistryLocked(registry)
         } catch {
             return
@@ -318,12 +306,9 @@ final class CodexAccountStore {
     private func loadAccountsFromRegistryLocked() -> AccountLoadResult {
         do {
             let registry = try readRegistryLocked()
-            guard let rawAccounts = registry["accounts"] as? [[String: Any]] else {
-                return AccountLoadResult(accounts: [], error: L.text(ko: "계정 레지스트리 형식이 올바르지 않습니다", en: "Account registry format is invalid"))
-            }
-            let activeKey = registry["active_account_key"] as? String
-            let accounts = rawAccounts.enumerated().compactMap { index, raw in
-                makeAccount(index: index, raw: raw, activeKey: activeKey)
+            let activeKey = registry.activeAccountKey
+            let accounts = registry.accounts.enumerated().compactMap { index, account in
+                makeAccount(index: index, stored: account, activeKey: activeKey)
             }
             return AccountLoadResult(
                 accounts: accounts,
@@ -334,21 +319,22 @@ final class CodexAccountStore {
         }
     }
 
-    private func makeAccount(index: Int, raw: [String: Any], activeKey: String?) -> CodexAccount? {
-        guard let identity = raw["account_key"] as? String else { return nil }
-        let email = (raw["email"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let alias = (raw["alias"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+    private func makeAccount(index: Int, stored: StoredAccount, activeKey: String?) -> CodexAccount? {
+        guard let identity = stored.accountKey else { return nil }
+        let email = stored.email?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let alias = stored.alias?.trimmingCharacters(in: .whitespacesAndNewlines)
         let displayEmail = (email?.isEmpty == false ? email : nil)
             ?? extractAuthInfo(from: authSnapshotURL(for: identity)).email
             ?? identity
-        let plan = ((raw["plan"] as? String)?.isEmpty == false ? raw["plan"] as? String : nil)
-            ?? ((raw["last_usage"] as? [String: Any])?["plan_type"] as? String)
+        let storedPlan = stored.plan?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let usagePlan = stored.lastUsage?.planType?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let plan = (storedPlan?.isEmpty == false && storedPlan?.lowercased() != "unknown" ? storedPlan : nil)
+            ?? (usagePlan?.isEmpty == false && usagePlan?.lowercased() != "unknown" ? usagePlan : nil)
             ?? "unknown"
-        let usage = raw["last_usage"] as? [String: Any]
-        let primary = makeUsageText(raw: usage?["primary"] as? [String: Any], kind: .fiveHour)
-        let secondary = makeUsageText(raw: usage?["secondary"] as? [String: Any], kind: .weekly)
-        let lastUsedAt = dateFromUnixSeconds(raw["last_used_at"])
-        let lastUsageUpdatedAt = dateFromUnixSeconds(usage?["updated_at"])
+        let lastUsageUpdatedAt = dateFromUnixSeconds(stored.lastUsage?.updatedAt)
+        let primary = makeUsageText(window: stored.lastUsage?.primary, fallbackKind: .fiveHour, observedAt: lastUsageUpdatedAt)
+        let secondary = makeUsageText(window: stored.lastUsage?.secondary, fallbackKind: .weekly, observedAt: lastUsageUpdatedAt)
+        let lastUsedAt = dateFromUnixSeconds(stored.lastUsedAt)
         let lastActivity = (lastUsageUpdatedAt ?? lastUsedAt).map(Format.relative) ?? "-"
         return CodexAccount(
             selector: "\(index + 1)",
@@ -358,40 +344,39 @@ final class CodexAccountStore {
             plan: plan,
             fiveHourUsage: primary.text,
             fiveHourUsedPercent: primary.percent,
+            fiveHourQuotaKind: primary.kind,
             weeklyUsage: secondary.text,
             weeklyUsedPercent: secondary.percent,
+            weeklyQuotaKind: secondary.kind,
             lastActivity: lastActivity,
             lastUsedAt: lastUsedAt,
             isActive: identity == activeKey
         )
     }
 
-    private enum QuotaWindowKind {
-        case fiveHour
-        case weekly
-    }
-
-    private func makeUsageText(raw: [String: Any]?, kind: QuotaWindowKind) -> (text: String, percent: Int?) {
-        guard let raw, let percent = intValue(raw["used_percent"]) else {
-            return ("-", nil)
+    private func makeUsageText(
+        window: StoredUsageWindow?,
+        fallbackKind: AppServerRateLimitWindow.Kind,
+        observedAt: Date?
+    ) -> (text: String, percent: Int?, kind: AppServerRateLimitWindow.Kind?) {
+        guard let window, let percent = window.usedPercent else {
+            return ("-", nil, nil)
         }
         let clamped = max(0, min(100, percent))
-        guard let resetSeconds = doubleValue(raw["resets_at"]) else {
-            return ("\(clamped)%", clamped)
+        let explicitKind = window.kind
+        let windowDurationMinutes = window.windowDurationMins
+        guard let resetSeconds = window.resetsAt else {
+            return ("\(clamped)%", clamped, explicitKind ?? fallbackKind)
         }
         let reset = Date(timeIntervalSince1970: resetSeconds)
-        let text = kind == .weekly
-            ? "\(clamped)% (\(Format.shortDate(reset)))"
-            : "\(clamped)% (\(Format.time(reset)))"
-        return (text, clamped)
-    }
-
-    private func usageSnapshot(from window: AppServerRateLimitWindow) -> [String: Any] {
-        var snapshot: [String: Any] = ["used_percent": window.displayPercent]
-        if let resetsAt = window.resetsAt {
-            snapshot["resets_at"] = resetsAt.timeIntervalSince1970
-        }
-        return snapshot
+        let displayKind = explicitKind ?? AppServerRateLimitWindow.Kind.inferred(
+            windowDurationMinutes: windowDurationMinutes,
+            resetsAt: reset,
+            observedAt: observedAt ?? Date(),
+            fallback: fallbackKind
+        )
+        let resetText = displayKind.usesDateReset ? Format.shortDate(reset) : Format.time(reset)
+        return ("\(clamped)% (\(resetText))", clamped, displayKind)
     }
 
     private func captureCurrentLoginLocked(alias: String?) throws -> Bool {
@@ -413,34 +398,32 @@ final class CodexAccountStore {
         try replaceFile(at: snapshotURL, withContentsOf: sourceAuthURL)
         try setPrivatePermissions(snapshotURL)
 
-        var registry = (try? readRegistryLocked()) ?? emptyRegistry()
-        var accounts = registry["accounts"] as? [[String: Any]] ?? []
+        var registry = (try? readRegistryLocked()) ?? StoredRegistry.empty()
         let nowSeconds = Int(Date().timeIntervalSince1970)
-        let existingIndex = accounts.firstIndex { ($0["account_key"] as? String) == identity }
-        var account = existingIndex.map { accounts[$0] } ?? [:]
-        account["account_key"] = identity
-        account["chatgpt_account_id"] = info.accountID ?? account["chatgpt_account_id"]
-        account["chatgpt_user_id"] = info.userID ?? account["chatgpt_user_id"]
-        account["email"] = info.email ?? account["email"]
+        let existingIndex = registry.accounts.firstIndex { $0.accountKey == identity }
+        var account = existingIndex.map { registry.accounts[$0] } ?? StoredAccount()
+        account.accountKey = identity
+        account.chatgptAccountID = info.accountID ?? account.chatgptAccountID
+        account.chatgptUserID = info.userID ?? account.chatgptUserID
+        account.email = info.email ?? account.email
         if let alias, alias.isEmpty == false {
-            account["alias"] = alias
-        } else if account["alias"] == nil {
-            account["alias"] = ""
+            account.alias = alias
+        } else if account.alias == nil {
+            account.alias = ""
         }
-        account["account_name"] = info.name ?? account["account_name"]
-        account["plan"] = info.plan ?? account["plan"] ?? "unknown"
-        account["auth_mode"] = info.authMode ?? account["auth_mode"] ?? "chatgpt"
-        account["created_at"] = account["created_at"] ?? nowSeconds
-        account["last_used_at"] = nowSeconds
+        account.accountName = info.name ?? account.accountName
+        account.plan = info.plan ?? account.plan ?? "unknown"
+        account.authMode = info.authMode ?? account.authMode ?? "chatgpt"
+        account.createdAt = account.createdAt ?? nowSeconds
+        account.lastUsedAt = nowSeconds
         if existingIndex == nil {
-            accounts.append(account)
+            registry.accounts.append(account)
         } else if let existingIndex {
-            accounts[existingIndex] = account
+            registry.accounts[existingIndex] = account
         }
-        registry["accounts"] = accounts
         if activate {
-            registry["active_account_key"] = identity
-            registry["active_account_activated_at_ms"] = Int(Date().timeIntervalSince1970 * 1000)
+            registry.activeAccountKey = identity
+            registry.activeAccountActivatedAtMs = Int(Date().timeIntervalSince1970 * 1000)
         }
         try writeRegistryLocked(registry)
         return identity
@@ -457,56 +440,50 @@ final class CodexAccountStore {
             return
         }
         var registry = try readRegistryLocked()
-        guard var accounts = registry["accounts"] as? [[String: Any]],
-              let existingIndex = accounts.firstIndex(where: { ($0["account_key"] as? String) == identity }) else {
+        guard let existingIndex = registry.accounts.firstIndex(where: { $0.accountKey == identity }) else {
             _ = try captureCurrentLoginLocked(alias: nil)
             return
         }
-        var account = accounts[existingIndex]
+        var account = registry.accounts[existingIndex]
         let nowSeconds = Int(Date().timeIntervalSince1970)
         var changed = false
 
-        func setIfChanged(_ key: String, _ value: Any?) {
+        func setIfChanged(_ keyPath: WritableKeyPath<StoredAccount, String?>, _ value: String?) {
             guard let value else { return }
-            if "\(account[key] ?? "")" != "\(value)" {
-                account[key] = value
+            if account[keyPath: keyPath] != value {
+                account[keyPath: keyPath] = value
                 changed = true
             }
         }
 
-        setIfChanged("chatgpt_account_id", info.accountID)
-        setIfChanged("chatgpt_user_id", info.userID)
-        setIfChanged("email", info.email)
-        setIfChanged("account_name", info.name)
-        setIfChanged("plan", info.plan ?? account["plan"] ?? "unknown")
-        setIfChanged("auth_mode", info.authMode ?? account["auth_mode"] ?? "chatgpt")
-        if account["last_used_at"] == nil {
-            account["last_used_at"] = nowSeconds
+        setIfChanged(\.chatgptAccountID, info.accountID)
+        setIfChanged(\.chatgptUserID, info.userID)
+        setIfChanged(\.email, info.email)
+        setIfChanged(\.accountName, info.name)
+        setIfChanged(\.plan, info.plan ?? account.plan ?? "unknown")
+        setIfChanged(\.authMode, info.authMode ?? account.authMode ?? "chatgpt")
+        if account.lastUsedAt == nil {
+            account.lastUsedAt = nowSeconds
             changed = true
         }
-        if (registry["active_account_key"] as? String) != identity {
-            registry["active_account_key"] = identity
-            registry["active_account_activated_at_ms"] = Int(Date().timeIntervalSince1970 * 1000)
+        if registry.activeAccountKey != identity {
+            registry.activeAccountKey = identity
+            registry.activeAccountActivatedAtMs = Int(Date().timeIntervalSince1970 * 1000)
             changed = true
-        } else if registry["active_account_activated_at_ms"] == nil {
-            registry["active_account_activated_at_ms"] = Int(Date().timeIntervalSince1970 * 1000)
+        } else if registry.activeAccountActivatedAtMs == nil {
+            registry.activeAccountActivatedAtMs = Int(Date().timeIntervalSince1970 * 1000)
             changed = true
         }
         guard changed else { return }
-        accounts[existingIndex] = account
-        registry["accounts"] = accounts
+        registry.accounts[existingIndex] = account
         try writeRegistryLocked(registry)
     }
 
     private func clearActiveLoginLocked() throws {
         var registry = try readRegistryLocked()
-        let activeValue = registry["active_account_key"]
-        let activationValue = registry["active_account_activated_at_ms"]
-        let hasActive = activeValue is String
-        let hasActivation = activationValue != nil && !(activationValue is NSNull)
-        guard hasActive || hasActivation else { return }
-        registry["active_account_key"] = NSNull()
-        registry["active_account_activated_at_ms"] = NSNull()
+        guard registry.activeAccountKey != nil || registry.activeAccountActivatedAtMs != nil else { return }
+        registry.activeAccountKey = nil
+        registry.activeAccountActivatedAtMs = nil
         try writeRegistryLocked(registry)
     }
 
@@ -572,33 +549,20 @@ final class CodexAccountStore {
         return object
     }
 
-    private func readRegistryLocked() throws -> [String: Any] {
+    private func readRegistryLocked() throws -> StoredRegistry {
         let data = try Data(contentsOf: registryURL)
-        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+        guard let registry = try? JSONDecoder().decode(StoredRegistry.self, from: data) else {
             throw StoreError.invalidRegistry
         }
-        return object
+        return registry
     }
 
-    private func writeRegistryLocked(_ registry: [String: Any]) throws {
+    private func writeRegistryLocked(_ registry: StoredRegistry) throws {
         try createDirectoryIfNeededLocked()
         backupFileIfPresent(registryURL, prefix: "registry.json.bak")
-        let data = try JSONSerialization.data(withJSONObject: registry, options: [.prettyPrinted, .sortedKeys])
+        let data = try JSONEncoder.codexHub.encode(registry)
         try writeDataAtomically(data, to: registryURL)
         try setPrivatePermissions(registryURL)
-    }
-
-    private func emptyRegistry() -> [String: Any] {
-        [
-            "active_account_key": NSNull(),
-            "active_account_activated_at_ms": NSNull(),
-            "config": [
-                "auto_switch": false,
-                "usage_api": false,
-                "account_api": false
-            ],
-            "accounts": []
-        ]
     }
 
     private func createDirectoryIfNeededLocked() throws {
@@ -722,81 +686,11 @@ final class CodexAccountStore {
     }
 
     private func run(_ executable: String, _ args: [String], timeout: TimeInterval, environmentOverrides: [String: String] = [:]) -> CommandResult {
-        let process = Process()
-        let pipe = Pipe()
-        let outputLock = NSLock()
-        var output = Data()
-        process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = args
-        process.standardOutput = pipe
-        process.standardError = pipe
-        var environment = processEnvironment(prependingExecutableDirectory: executable)
-        for (key, value) in environmentOverrides {
-            environment[key] = value
-        }
-        process.environment = environment
-        pipe.fileHandleForReading.readabilityHandler = { handle in
-            let data = handle.availableData
-            guard data.isEmpty == false else { return }
-            outputLock.lock()
-            output.append(data)
-            outputLock.unlock()
-        }
-        do {
-            try process.run()
-            let semaphore = DispatchSemaphore(value: 0)
-            DispatchQueue.global(qos: .utility).async {
-                process.waitUntilExit()
-                semaphore.signal()
-            }
-            if semaphore.wait(timeout: .now() + timeout) == .timedOut {
-                if process.isRunning {
-                    process.terminate()
-                }
-                if semaphore.wait(timeout: .now() + 1) == .timedOut, process.isRunning {
-                    kill(process.processIdentifier, SIGKILL)
-                    _ = semaphore.wait(timeout: .now() + 1)
-                }
-                pipe.fileHandleForReading.readabilityHandler = nil
-                return CommandResult(status: 124, output: L.text(ko: "명령 실행 시간이 초과됐습니다", en: "Command timed out"))
-            }
-            pipe.fileHandleForReading.readabilityHandler = nil
-            return CommandResult(status: process.terminationStatus, output: drainedOutput(from: pipe, accumulated: output, lock: outputLock))
-        } catch {
-            pipe.fileHandleForReading.readabilityHandler = nil
-            return CommandResult(status: 127, output: error.localizedDescription)
-        }
-    }
-
-    private func drainedOutput(from pipe: Pipe, accumulated: Data, lock: NSLock) -> String {
-        lock.lock()
-        var data = accumulated
-        lock.unlock()
-        data.append(pipe.fileHandleForReading.readDataToEndOfFile())
-        return String(data: data, encoding: .utf8) ?? ""
-    }
-
-    private func processEnvironment(prependingExecutableDirectory executable: String? = nil) -> [String: String] {
-        var environment = ProcessInfo.processInfo.environment
-        let currentPath = environment["PATH"] ?? ""
-        var pathEntries: [String] = []
-        if let executable {
-            pathEntries.append(URL(fileURLWithPath: executable).deletingLastPathComponent().path)
-        }
-        pathEntries.append(contentsOf: [
-            "\(NSHomeDirectory())/.local/bin",
-            "/opt/homebrew/bin",
-            "/usr/local/bin",
-            "/usr/bin",
-            "/bin",
-            "/usr/sbin",
-            "/sbin"
-        ])
-        if !currentPath.isEmpty {
-            pathEntries.append(currentPath)
-        }
-        environment["PATH"] = pathEntries.joined(separator: ":")
-        return environment
+        let environment = CodexProcessEnvironment.make(
+            prependingExecutableDirectory: executable,
+            overrides: environmentOverrides
+        )
+        return processRunner.run(executable, args, timeout, environment)
     }
 
     private func dateFromUnixSeconds(_ value: Any?) -> Date? {
@@ -815,6 +709,447 @@ final class CodexAccountStore {
         if let int = value as? Int { return Double(int) }
         if let string = value as? String { return Double(string) }
         return nil
+    }
+
+    private struct DynamicCodingKey: CodingKey, Hashable {
+        let stringValue: String
+        let intValue: Int?
+
+        init(_ stringValue: String) {
+            self.stringValue = stringValue
+            self.intValue = nil
+        }
+
+        init?(stringValue: String) {
+            self.init(stringValue)
+        }
+
+        init?(intValue: Int) {
+            self.stringValue = "\(intValue)"
+            self.intValue = intValue
+        }
+    }
+
+    private enum JSONValue: Codable, Equatable {
+        case object([String: JSONValue])
+        case array([JSONValue])
+        case string(String)
+        case number(Double)
+        case bool(Bool)
+        case null
+
+        init(from decoder: Decoder) throws {
+            if let container = try? decoder.container(keyedBy: DynamicCodingKey.self) {
+                var values: [String: JSONValue] = [:]
+                for key in container.allKeys {
+                    values[key.stringValue] = try container.decode(JSONValue.self, forKey: key)
+                }
+                self = .object(values)
+                return
+            }
+
+            if var container = try? decoder.unkeyedContainer() {
+                var values: [JSONValue] = []
+                while container.isAtEnd == false {
+                    values.append(try container.decode(JSONValue.self))
+                }
+                self = .array(values)
+                return
+            }
+
+            let container = try decoder.singleValueContainer()
+            if container.decodeNil() {
+                self = .null
+            } else if let value = try? container.decode(Bool.self) {
+                self = .bool(value)
+            } else if let value = try? container.decode(Double.self) {
+                self = .number(value)
+            } else if let value = try? container.decode(String.self) {
+                self = .string(value)
+            } else {
+                throw DecodingError.dataCorruptedError(in: container, debugDescription: "Unsupported JSON value")
+            }
+        }
+
+        func encode(to encoder: Encoder) throws {
+            switch self {
+            case .object(let values):
+                var container = encoder.container(keyedBy: DynamicCodingKey.self)
+                for key in values.keys.sorted() {
+                    try container.encode(values[key], forKey: DynamicCodingKey(key))
+                }
+            case .array(let values):
+                var container = encoder.unkeyedContainer()
+                for value in values {
+                    try container.encode(value)
+                }
+            case .string(let value):
+                var container = encoder.singleValueContainer()
+                try container.encode(value)
+            case .number(let value):
+                var container = encoder.singleValueContainer()
+                try container.encode(value)
+            case .bool(let value):
+                var container = encoder.singleValueContainer()
+                try container.encode(value)
+            case .null:
+                var container = encoder.singleValueContainer()
+                try container.encodeNil()
+            }
+        }
+    }
+
+    private enum UnknownFields {
+        static func decode<K: CodingKey & CaseIterable>(
+            from decoder: Decoder,
+            excluding _: K.Type
+        ) throws -> [String: JSONValue] where K.AllCases: Sequence, K.AllCases.Element == K {
+            let knownKeys = Set(K.allCases.map(\.stringValue))
+            let container = try decoder.container(keyedBy: DynamicCodingKey.self)
+            var fields: [String: JSONValue] = [:]
+            for key in container.allKeys where knownKeys.contains(key.stringValue) == false {
+                fields[key.stringValue] = try container.decode(JSONValue.self, forKey: key)
+            }
+            return fields
+        }
+
+        static func encode<K: CodingKey & CaseIterable>(
+            _ fields: [String: JSONValue],
+            to encoder: Encoder,
+            excluding _: K.Type
+        ) throws where K.AllCases: Sequence, K.AllCases.Element == K {
+            let knownKeys = Set(K.allCases.map(\.stringValue))
+            var container = encoder.container(keyedBy: DynamicCodingKey.self)
+            for key in fields.keys.sorted() where knownKeys.contains(key) == false {
+                try container.encode(fields[key], forKey: DynamicCodingKey(key))
+            }
+        }
+    }
+
+    private struct StoredRegistry: Codable, Equatable {
+        var activeAccountKey: String?
+        var activeAccountActivatedAtMs: Int?
+        var config: StoredRegistryConfig
+        var accounts: [StoredAccount]
+        var extraFields: [String: JSONValue]
+
+        enum CodingKeys: String, CodingKey, CaseIterable {
+            case activeAccountKey = "active_account_key"
+            case activeAccountActivatedAtMs = "active_account_activated_at_ms"
+            case config
+            case accounts
+        }
+
+        init(
+            activeAccountKey: String?,
+            activeAccountActivatedAtMs: Int?,
+            config: StoredRegistryConfig,
+            accounts: [StoredAccount],
+            extraFields: [String: JSONValue] = [:]
+        ) {
+            self.activeAccountKey = activeAccountKey
+            self.activeAccountActivatedAtMs = activeAccountActivatedAtMs
+            self.config = config
+            self.accounts = accounts
+            self.extraFields = extraFields
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            activeAccountKey = try container.decodeIfPresent(String.self, forKey: .activeAccountKey)
+            activeAccountActivatedAtMs = try FlexibleNumber.intIfPresent(in: container, forKey: .activeAccountActivatedAtMs)
+            config = try container.decodeIfPresent(StoredRegistryConfig.self, forKey: .config) ?? .default
+            accounts = try container.decodeIfPresent([StoredAccount].self, forKey: .accounts) ?? []
+            extraFields = try UnknownFields.decode(from: decoder, excluding: CodingKeys.self)
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            if let activeAccountKey {
+                try container.encode(activeAccountKey, forKey: .activeAccountKey)
+            } else {
+                try container.encodeNil(forKey: .activeAccountKey)
+            }
+            if let activeAccountActivatedAtMs {
+                try container.encode(activeAccountActivatedAtMs, forKey: .activeAccountActivatedAtMs)
+            } else {
+                try container.encodeNil(forKey: .activeAccountActivatedAtMs)
+            }
+            try container.encode(config, forKey: .config)
+            try container.encode(accounts, forKey: .accounts)
+            try UnknownFields.encode(extraFields, to: encoder, excluding: CodingKeys.self)
+        }
+
+        static func empty() -> StoredRegistry {
+            StoredRegistry(activeAccountKey: nil, activeAccountActivatedAtMs: nil, config: .default, accounts: [])
+        }
+    }
+
+    private struct StoredRegistryConfig: Codable, Equatable {
+        var autoSwitch: Bool
+        var usageAPI: Bool
+        var accountAPI: Bool
+        var extraFields: [String: JSONValue]
+
+        enum CodingKeys: String, CodingKey, CaseIterable {
+            case autoSwitch = "auto_switch"
+            case usageAPI = "usage_api"
+            case accountAPI = "account_api"
+        }
+
+        static let `default` = StoredRegistryConfig(autoSwitch: false, usageAPI: false, accountAPI: false)
+
+        init(autoSwitch: Bool, usageAPI: Bool, accountAPI: Bool, extraFields: [String: JSONValue] = [:]) {
+            self.autoSwitch = autoSwitch
+            self.usageAPI = usageAPI
+            self.accountAPI = accountAPI
+            self.extraFields = extraFields
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            autoSwitch = try container.decodeIfPresent(Bool.self, forKey: .autoSwitch) ?? false
+            usageAPI = try container.decodeIfPresent(Bool.self, forKey: .usageAPI) ?? false
+            accountAPI = try container.decodeIfPresent(Bool.self, forKey: .accountAPI) ?? false
+            extraFields = try UnknownFields.decode(from: decoder, excluding: CodingKeys.self)
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(autoSwitch, forKey: .autoSwitch)
+            try container.encode(usageAPI, forKey: .usageAPI)
+            try container.encode(accountAPI, forKey: .accountAPI)
+            try UnknownFields.encode(extraFields, to: encoder, excluding: CodingKeys.self)
+        }
+    }
+
+    private struct StoredAccount: Codable, Equatable {
+        var accountKey: String?
+        var chatgptAccountID: String?
+        var chatgptUserID: String?
+        var email: String?
+        var alias: String?
+        var accountName: String?
+        var plan: String?
+        var authMode: String?
+        var createdAt: Int?
+        var lastUsedAt: Int?
+        var lastUsage: StoredUsage?
+        var extraFields: [String: JSONValue]
+
+        enum CodingKeys: String, CodingKey, CaseIterable {
+            case accountKey = "account_key"
+            case chatgptAccountID = "chatgpt_account_id"
+            case chatgptUserID = "chatgpt_user_id"
+            case email
+            case alias
+            case accountName = "account_name"
+            case plan
+            case authMode = "auth_mode"
+            case createdAt = "created_at"
+            case lastUsedAt = "last_used_at"
+            case lastUsage = "last_usage"
+        }
+
+        init(
+            accountKey: String? = nil,
+            chatgptAccountID: String? = nil,
+            chatgptUserID: String? = nil,
+            email: String? = nil,
+            alias: String? = nil,
+            accountName: String? = nil,
+            plan: String? = nil,
+            authMode: String? = nil,
+            createdAt: Int? = nil,
+            lastUsedAt: Int? = nil,
+            lastUsage: StoredUsage? = nil,
+            extraFields: [String: JSONValue] = [:]
+        ) {
+            self.accountKey = accountKey
+            self.chatgptAccountID = chatgptAccountID
+            self.chatgptUserID = chatgptUserID
+            self.email = email
+            self.alias = alias
+            self.accountName = accountName
+            self.plan = plan
+            self.authMode = authMode
+            self.createdAt = createdAt
+            self.lastUsedAt = lastUsedAt
+            self.lastUsage = lastUsage
+            self.extraFields = extraFields
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            accountKey = try container.decodeIfPresent(String.self, forKey: .accountKey)
+            chatgptAccountID = try container.decodeIfPresent(String.self, forKey: .chatgptAccountID)
+            chatgptUserID = try container.decodeIfPresent(String.self, forKey: .chatgptUserID)
+            email = try container.decodeIfPresent(String.self, forKey: .email)
+            alias = try container.decodeIfPresent(String.self, forKey: .alias)
+            accountName = try container.decodeIfPresent(String.self, forKey: .accountName)
+            plan = try container.decodeIfPresent(String.self, forKey: .plan)
+            authMode = try container.decodeIfPresent(String.self, forKey: .authMode)
+            createdAt = try FlexibleNumber.intIfPresent(in: container, forKey: .createdAt)
+            lastUsedAt = try FlexibleNumber.intIfPresent(in: container, forKey: .lastUsedAt)
+            lastUsage = try container.decodeIfPresent(StoredUsage.self, forKey: .lastUsage)
+            extraFields = try UnknownFields.decode(from: decoder, excluding: CodingKeys.self)
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encodeIfPresent(accountKey, forKey: .accountKey)
+            try container.encodeIfPresent(chatgptAccountID, forKey: .chatgptAccountID)
+            try container.encodeIfPresent(chatgptUserID, forKey: .chatgptUserID)
+            try container.encodeIfPresent(email, forKey: .email)
+            try container.encodeIfPresent(alias, forKey: .alias)
+            try container.encodeIfPresent(accountName, forKey: .accountName)
+            try container.encodeIfPresent(plan, forKey: .plan)
+            try container.encodeIfPresent(authMode, forKey: .authMode)
+            try container.encodeIfPresent(createdAt, forKey: .createdAt)
+            try container.encodeIfPresent(lastUsedAt, forKey: .lastUsedAt)
+            try container.encodeIfPresent(lastUsage, forKey: .lastUsage)
+            try UnknownFields.encode(extraFields, to: encoder, excluding: CodingKeys.self)
+        }
+
+        mutating func updateUsage(_ limits: AppServerRateLimits) {
+            var usage = lastUsage ?? StoredUsage()
+            if let planType = limits.planType?.trimmingCharacters(in: .whitespacesAndNewlines),
+               planType.isEmpty == false {
+                usage.planType = planType
+            }
+            if let primary = limits.primary {
+                var window = StoredUsageWindow(primary)
+                window.extraFields = usage.primary?.extraFields ?? [:]
+                usage.primary = window
+            }
+            if let secondary = limits.secondary {
+                var window = StoredUsageWindow(secondary)
+                window.extraFields = usage.secondary?.extraFields ?? [:]
+                usage.secondary = window
+            } else if limits.primary?.displayKind(fallback: .fiveHour) == .monthly {
+                usage.secondary = nil
+            }
+            usage.updatedAt = Int(Date().timeIntervalSince1970)
+            lastUsage = usage
+        }
+    }
+
+    private struct StoredUsage: Codable, Equatable {
+        var planType: String?
+        var primary: StoredUsageWindow?
+        var secondary: StoredUsageWindow?
+        var updatedAt: Int?
+        var extraFields: [String: JSONValue]
+
+        enum CodingKeys: String, CodingKey, CaseIterable {
+            case planType = "plan_type"
+            case primary
+            case secondary
+            case updatedAt = "updated_at"
+        }
+
+        init(
+            planType: String? = nil,
+            primary: StoredUsageWindow? = nil,
+            secondary: StoredUsageWindow? = nil,
+            updatedAt: Int? = nil,
+            extraFields: [String: JSONValue] = [:]
+        ) {
+            self.planType = planType
+            self.primary = primary
+            self.secondary = secondary
+            self.updatedAt = updatedAt
+            self.extraFields = extraFields
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            planType = try container.decodeIfPresent(String.self, forKey: .planType)
+            primary = try container.decodeIfPresent(StoredUsageWindow.self, forKey: .primary)
+            secondary = try container.decodeIfPresent(StoredUsageWindow.self, forKey: .secondary)
+            updatedAt = try FlexibleNumber.intIfPresent(in: container, forKey: .updatedAt)
+            extraFields = try UnknownFields.decode(from: decoder, excluding: CodingKeys.self)
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encodeIfPresent(planType, forKey: .planType)
+            try container.encodeIfPresent(primary, forKey: .primary)
+            try container.encodeIfPresent(secondary, forKey: .secondary)
+            try container.encodeIfPresent(updatedAt, forKey: .updatedAt)
+            try UnknownFields.encode(extraFields, to: encoder, excluding: CodingKeys.self)
+        }
+    }
+
+    private struct StoredUsageWindow: Codable, Equatable {
+        var usedPercent: Int?
+        var kind: AppServerRateLimitWindow.Kind?
+        var windowDurationMins: Double?
+        var resetsAt: Double?
+        var extraFields: [String: JSONValue]
+
+        enum CodingKeys: String, CodingKey, CaseIterable {
+            case usedPercent = "used_percent"
+            case kind
+            case windowDurationMins = "window_duration_mins"
+            case resetsAt = "resets_at"
+        }
+
+        init(
+            usedPercent: Int? = nil,
+            kind: AppServerRateLimitWindow.Kind? = nil,
+            windowDurationMins: Double? = nil,
+            resetsAt: Double? = nil,
+            extraFields: [String: JSONValue] = [:]
+        ) {
+            self.usedPercent = usedPercent
+            self.kind = kind
+            self.windowDurationMins = windowDurationMins
+            self.resetsAt = resetsAt
+            self.extraFields = extraFields
+        }
+
+        init(_ window: AppServerRateLimitWindow) {
+            usedPercent = window.displayPercent
+            kind = window.kind
+            windowDurationMins = window.windowDurationMinutes
+            resetsAt = window.resetsAt?.timeIntervalSince1970
+            extraFields = [:]
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            usedPercent = try FlexibleNumber.intIfPresent(in: container, forKey: .usedPercent)
+            kind = try container.decodeIfPresent(AppServerRateLimitWindow.Kind.self, forKey: .kind)
+            windowDurationMins = try FlexibleNumber.doubleIfPresent(in: container, forKey: .windowDurationMins)
+            resetsAt = try FlexibleNumber.doubleIfPresent(in: container, forKey: .resetsAt)
+            extraFields = try UnknownFields.decode(from: decoder, excluding: CodingKeys.self)
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encodeIfPresent(usedPercent, forKey: .usedPercent)
+            try container.encodeIfPresent(kind, forKey: .kind)
+            try container.encodeIfPresent(windowDurationMins, forKey: .windowDurationMins)
+            try container.encodeIfPresent(resetsAt, forKey: .resetsAt)
+            try UnknownFields.encode(extraFields, to: encoder, excluding: CodingKeys.self)
+        }
+    }
+
+    private enum FlexibleNumber {
+        static func intIfPresent<Key: CodingKey>(in container: KeyedDecodingContainer<Key>, forKey key: Key) throws -> Int? {
+            if let int = try? container.decodeIfPresent(Int.self, forKey: key) { return int }
+            if let double = try? container.decodeIfPresent(Double.self, forKey: key) { return Int(double) }
+            if let string = try? container.decodeIfPresent(String.self, forKey: key) { return Int(string) }
+            return nil
+        }
+
+        static func doubleIfPresent<Key: CodingKey>(in container: KeyedDecodingContainer<Key>, forKey key: Key) throws -> Double? {
+            if let double = try? container.decodeIfPresent(Double.self, forKey: key) { return double }
+            if let int = try? container.decodeIfPresent(Int.self, forKey: key) { return Double(int) }
+            if let string = try? container.decodeIfPresent(String.self, forKey: key) { return Double(string) }
+            return nil
+        }
     }
 
     private struct AuthInfo {

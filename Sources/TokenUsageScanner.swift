@@ -29,7 +29,27 @@ private struct TokenFootprint: Codable, Equatable {
 
 private struct SessionUsageEntry: Codable, Equatable {
     let timestamp: Date
+    let model: String?
     let aggregate: UsageAggregate
+
+    enum CodingKeys: String, CodingKey {
+        case timestamp
+        case model
+        case aggregate
+    }
+
+    init(timestamp: Date, model: String?, aggregate: UsageAggregate) {
+        self.timestamp = timestamp
+        self.model = model
+        self.aggregate = aggregate
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        timestamp = try container.decode(Date.self, forKey: .timestamp)
+        model = try container.decodeIfPresent(String.self, forKey: .model)
+        aggregate = try container.decode(UsageAggregate.self, forKey: .aggregate)
+    }
 }
 
 private struct SessionFileRecord: Codable, Equatable {
@@ -76,7 +96,9 @@ private struct UsageRollup {
     let weekByAccount: [String: UsageAggregate]
     let monthByAccount: [String: UsageAggregate]
     let recentDaily: [(Date, UsageAggregate)]
+    let activitySeries: [DashboardSeriesPoint]
     let scannedFiles: Int
+    let historyRows: [UsageHistoryRow]
 }
 
 private struct UsageScanFailure: Error {
@@ -115,6 +137,12 @@ private struct UsageAttribution {
     }
 }
 
+private struct HistoryKey: Hashable {
+    let date: Date
+    let accountEmail: String
+    let model: String
+}
+
 final class TokenUsageScanner {
     private let accountStore: CodexAccountStore
     private let pricingCatalog = ModelPricingCatalog.load()
@@ -126,10 +154,7 @@ final class TokenUsageScanner {
         encoder.dateEncodingStrategy = .iso8601
         return encoder
     }()
-    private let cacheURL: URL = {
-        let appSupport = LocalStorageSecurity.codexHubApplicationSupportDirectory()
-        return appSupport.appendingPathComponent("usage-ledger-v2.json")
-    }()
+    private let cacheURL: URL
     private let isoFormatter: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -141,10 +166,12 @@ final class TokenUsageScanner {
         return formatter
     }()
 
-    init(accountStore: CodexAccountStore = CodexAccountStore()) {
+    init(accountStore: CodexAccountStore = CodexAccountStore(), cacheURL: URL? = nil) {
         self.accountStore = accountStore
-        if fileManager.fileExists(atPath: cacheURL.path) {
-            try? LocalStorageSecurity.setPrivateFilePermissions(cacheURL)
+        let appSupport = LocalStorageSecurity.codexHubApplicationSupportDirectory()
+        self.cacheURL = cacheURL ?? appSupport.appendingPathComponent("usage-ledger-v2.json")
+        if fileManager.fileExists(atPath: self.cacheURL.path) {
+            try? LocalStorageSecurity.setPrivateFilePermissions(self.cacheURL)
         }
     }
 
@@ -164,9 +191,28 @@ final class TokenUsageScanner {
         }
     }
 
+    func scanDashboard(
+        attribution: AttributionStore,
+        accounts: [CodexAccount],
+        historyStore: UsageHistoryStore,
+        days: Int,
+        progress: ((UsageScanProgress) -> Void)? = nil
+    ) -> DashboardSnapshot {
+        scanQueue.sync {
+            scanDashboardUnlocked(
+                attribution: attribution,
+                accounts: accounts,
+                historyStore: historyStore,
+                days: days,
+                progress: progress
+            )
+        }
+    }
+
     private func scanUnlocked(attribution: AttributionStore, accounts: [CodexAccount]) -> UsageSnapshot {
         let calendar = Calendar.current
-        let rangeStart = calendar.startOfDay(for: Date())
+        let todayStart = calendar.startOfDay(for: Date())
+        let rangeStart = calendar.dateInterval(of: .weekOfYear, for: Date())?.start ?? todayStart
         let result = scanSessions(from: rangeStart, attribution: attribution, accounts: accounts, rollupMode: .todayOnly)
         switch result {
         case .failure(let failure):
@@ -210,12 +256,53 @@ final class TokenUsageScanner {
         }
     }
 
+    private func scanDashboardUnlocked(
+        attribution: AttributionStore,
+        accounts: [CodexAccount],
+        historyStore: UsageHistoryStore,
+        days: Int,
+        progress: ((UsageScanProgress) -> Void)?
+    ) -> DashboardSnapshot {
+        let calendar = Calendar.current
+        let now = Date()
+        let todayStart = calendar.startOfDay(for: now)
+        let historyStart = calendar.date(byAdding: .day, value: -364, to: todayStart) ?? todayStart
+        let result = scanSessions(
+            from: historyStart,
+            attribution: attribution,
+            accounts: accounts,
+            rollupMode: .full,
+            progress: progress,
+            retentionStartOverride: historyStart,
+            historyStart: historyStart
+        )
+        switch result {
+        case .failure:
+            return historyStore.makeSnapshot(days: days, now: now, scannedFiles: 0)
+        case .success(let rollup):
+            historyStore.replaceRows(rollup.historyRows, now: now)
+            let snapshot = historyStore.makeSnapshot(days: days, now: now, scannedFiles: rollup.scannedFiles)
+            return DashboardSnapshot(
+                total: snapshot.total,
+                dailySeries: snapshot.dailySeries,
+                accountBreakdown: snapshot.accountBreakdown,
+                modelBreakdown: snapshot.modelBreakdown,
+                activitySeries: rollup.activitySeries,
+                calendarHeatmap: snapshot.calendarHeatmap,
+                scannedFiles: snapshot.scannedFiles,
+                lastUpdatedAt: snapshot.lastUpdatedAt
+            )
+        }
+    }
+
     private func scanSessions(
         from rangeStart: Date,
         attribution: AttributionStore,
         accounts: [CodexAccount],
         rollupMode: RollupMode,
-        progress: ((UsageScanProgress) -> Void)? = nil
+        progress: ((UsageScanProgress) -> Void)? = nil,
+        retentionStartOverride: Date? = nil,
+        historyStart: Date? = nil
     ) -> Result<UsageRollup, UsageScanFailure> {
         let root = accountStore.resolvedCodexHome()
             .appendingPathComponent("sessions", isDirectory: true)
@@ -229,7 +316,9 @@ final class TokenUsageScanner {
         let todayStart = calendar.startOfDay(for: now)
         let weekStart = calendar.dateInterval(of: .weekOfYear, for: now)?.start ?? todayStart
         let monthStart = calendar.dateInterval(of: .month, for: now)?.start ?? weekStart
-        let retentionStart = min(weekStart, monthStart)
+        let retentionStart = retentionStartOverride ?? min(weekStart, monthStart)
+        let activityEnd = now
+        let activityStart = calendar.date(byAdding: .day, value: -7, to: activityEnd) ?? todayStart
         let files = jsonlFiles(in: root, from: rangeStart, through: now, calendar: calendar)
         let loaded = loadLedger()
         var ledger = loaded.ledger
@@ -286,7 +375,12 @@ final class TokenUsageScanner {
             monthStart: monthStart,
             calendar: calendar,
             attribution: attributionPolicy,
-            mode: rollupMode
+            mode: rollupMode,
+            historyStart: historyStart,
+            activityStart: rollupMode == .full ? activityStart : nil,
+            activityEnd: rollupMode == .full ? activityEnd : nil,
+            activityBucketCount: 30,
+            updatedAt: now
         )
         return .success(rollup)
     }
@@ -434,7 +528,7 @@ final class TokenUsageScanner {
         guard let normalized = delta?.normalized(), normalized.isZero == false else { return true }
 
         let aggregate = makeAggregate(totals: normalized, model: state.lastModel)
-        state.usageEvents.append(SessionUsageEntry(timestamp: eventDate, aggregate: aggregate))
+        state.usageEvents.append(SessionUsageEntry(timestamp: eventDate, model: state.lastModel, aggregate: aggregate))
         return true
     }
 
@@ -445,7 +539,12 @@ final class TokenUsageScanner {
         monthStart: Date,
         calendar: Calendar,
         attribution: UsageAttribution,
-        mode: RollupMode
+        mode: RollupMode,
+        historyStart: Date? = nil,
+        activityStart: Date? = nil,
+        activityEnd: Date? = nil,
+        activityBucketCount: Int = 30,
+        updatedAt: Date = Date()
     ) -> UsageRollup {
         var today: UsageAggregate = .zero
         var week: UsageAggregate = .zero
@@ -454,17 +553,31 @@ final class TokenUsageScanner {
         var weekByAccount: [String: UsageAggregate] = [:]
         var monthByAccount: [String: UsageAggregate] = [:]
         var daily: [Date: UsageAggregate] = [:]
+        var history: [HistoryKey: UsageAggregate] = [:]
+        let activityBucketCount = max(activityBucketCount, 1)
+        var activityBuckets = Array(repeating: UsageAggregate.zero, count: activityBucketCount)
+        let activityInterval = activityStart.flatMap { start in
+            activityEnd.map { end in max(end.timeIntervalSince(start), 1) / Double(activityBucketCount) }
+        }
         var recordCount = 0
         let dailyStart = mode == .todayOnly ? todayStart : min(weekStart, monthStart)
+        let earliestEventStart = [dailyStart, historyStart, activityStart].compactMap { $0 }.min() ?? dailyStart
 
         for record in records {
             recordCount += 1
             for entry in record.usageEvents {
-                guard entry.timestamp >= dailyStart else { continue }
+                guard entry.timestamp >= earliestEventStart else { continue }
                 let date = calendar.startOfDay(for: entry.timestamp)
                 let aggregate = entry.aggregate
                 let email = attribution.email(for: entry.timestamp)
-                daily[date] = (daily[date] ?? .zero).adding(aggregate)
+                if date >= dailyStart {
+                    daily[date] = (daily[date] ?? .zero).adding(aggregate)
+                }
+                if let historyStart, date >= historyStart {
+                    let model = normalizedModel(entry.model)
+                    let key = HistoryKey(date: date, accountEmail: email, model: model)
+                    history[key] = (history[key] ?? .zero).adding(aggregate)
+                }
                 if mode == .full, entry.timestamp >= monthStart {
                     month = month.adding(aggregate)
                     monthByAccount[email] = (monthByAccount[email] ?? .zero).adding(aggregate)
@@ -477,7 +590,23 @@ final class TokenUsageScanner {
                     today = today.adding(aggregate)
                     todayByAccount[email] = (todayByAccount[email] ?? .zero).adding(aggregate)
                 }
+                if let activityStart, let activityEnd, let activityInterval,
+                   entry.timestamp >= activityStart,
+                   entry.timestamp <= activityEnd {
+                    let offset = entry.timestamp.timeIntervalSince(activityStart)
+                    let index = min(activityBucketCount - 1, max(0, Int(offset / activityInterval)))
+                    activityBuckets[index] = activityBuckets[index].adding(aggregate)
+                }
             }
+        }
+        let activitySeries: [DashboardSeriesPoint]
+        if let activityStart, let activityInterval {
+            activitySeries = activityBuckets.indices.map { index in
+                let date = activityStart.addingTimeInterval(Double(index) * activityInterval)
+                return DashboardSeriesPoint(date: date, aggregate: activityBuckets[index])
+            }
+        } else {
+            activitySeries = []
         }
 
         return UsageRollup(
@@ -488,13 +617,29 @@ final class TokenUsageScanner {
             weekByAccount: weekByAccount,
             monthByAccount: monthByAccount,
             recentDaily: daily.map { ($0.key, $0.value) }.sorted { $0.0 > $1.0 },
-            scannedFiles: recordCount
+            activitySeries: activitySeries,
+            scannedFiles: recordCount,
+            historyRows: history.map { key, aggregate in
+                UsageHistoryRow(
+                    date: key.date,
+                    accountEmail: key.accountEmail,
+                    model: key.model,
+                    totals: aggregate.totals,
+                    costs: aggregate.costs,
+                    updatedAt: updatedAt
+                )
+            }
         )
     }
 
     private func makeAggregate(totals: TokenTotals, model: String?) -> UsageAggregate {
         let rates = pricingCatalog.rates(for: model)
         return UsageAggregate(totals: totals, costs: CostTotals(totals: totals, rates: rates))
+    }
+
+    private func normalizedModel(_ model: String?) -> String {
+        let trimmed = model?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? "Unknown" : trimmed
     }
 
     private func parseTimestamp(_ timestamp: String) -> Date? {

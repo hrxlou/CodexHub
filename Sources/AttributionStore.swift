@@ -5,11 +5,11 @@ final class AttributionStore {
     private let lock = NSLock()
     private(set) var events: [AttributionEvent] = []
 
-    init() {
+    init(fileURL: URL? = nil) {
         let appSupport = LocalStorageSecurity.codexHubApplicationSupportDirectory()
-        fileURL = appSupport.appendingPathComponent("attribution-events.json")
-        if FileManager.default.fileExists(atPath: fileURL.path) {
-            try? LocalStorageSecurity.setPrivateFilePermissions(fileURL)
+        self.fileURL = fileURL ?? appSupport.appendingPathComponent("attribution-events.json")
+        if FileManager.default.fileExists(atPath: self.fileURL.path) {
+            try? LocalStorageSecurity.setPrivateFilePermissions(self.fileURL)
         }
         load()
     }
