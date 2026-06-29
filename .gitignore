@@ -2,3 +2,10 @@ build/
 dist/
 .build/
 .DS_Store
+.env
+.env.*
+auth.json
+*.auth.json
+accounts/registry.json
+*.pem
+*.key
