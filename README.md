@@ -21,16 +21,13 @@ CodexHub delegates new sign-ins to the official Codex CLI login flow, then store
 
 Add only Codex accounts you own or are authorized to use from the CodexHub account management panel. CodexHub opens the normal Codex browser login flow in an isolated Codex home and saves the account after login completes. Adding an account does not activate it; switch explicitly from the account card when you want to use it. Sharing or storing someone else's credentials is not supported.
 
-If you previously used `codex-auth`, CodexHub reads and writes the same local `accounts/registry.json` and `*.auth.json` account store layout under `CODEX_HOME` or `~/.codex`, so existing stored accounts should appear without reinstalling or invoking `codex-auth`.
-
 ## Account Management
 
 - **Add account** opens the official `codex login` flow with file-backed credentials in an isolated temporary `CODEX_HOME`, then stores the resulting auth snapshot in the local account registry.
 - **Switch account** replaces the active Codex `auth.json` with the selected stored snapshot, validates it, and restores the previous auth and registry state if validation fails.
 - **Remove account** is available only for inactive accounts. Removal deletes the stored auth snapshot and registry entry together, so a failed removal does not leave the registry and snapshot out of sync.
 - **Active Codex work warning** appears before switching when the local Codex app reports active threads, including work waiting for approval or user input.
-- **Codex app restart** is attempted after a successful switch for `/Applications/Codex.app` / `com.openai.codex` only. ChatGPT is not targeted. CodexHub never force-quits Codex; if Codex shows an interrupt confirmation, CodexHub waits for your choice and cancels the restart if Codex remains open.
-- Confirmation overlays use **Cancel** for the non-destructive choice; pressing `Esc` also cancels the overlay.
+- **Codex app refresh** is attempted after a successful switch so the app picks up the selected account. CodexHub does not force quit Codex; if Codex is asking whether to interrupt work, CodexHub leaves that choice to you.
 
 ## Usage and Quota
 
@@ -172,16 +169,13 @@ CodexHub는 새 로그인을 공식 Codex CLI 로그인 흐름에 위임한 뒤,
 
 CodexHub 계정 관리 패널에는 본인이 소유하거나 사용 권한이 있는 Codex 계정만 추가하세요. CodexHub는 격리된 임시 Codex 홈에서 일반 Codex 브라우저 로그인 흐름을 열고, 로그인이 끝나면 해당 계정을 저장합니다. 계정 추가만으로는 활성 계정이 바뀌지 않으며, 사용할 때 계정 카드에서 명시적으로 전환합니다. 타인의 credential 공유나 저장은 지원하지 않습니다.
 
-이전에 `codex-auth`를 사용했다면, CodexHub가 `CODEX_HOME` 또는 `~/.codex` 아래의 같은 로컬 `accounts/registry.json` 및 `*.auth.json` 계정 저장소 레이아웃을 읽고 쓰므로 기존 저장 계정이 별도 재설치나 실행 없이 표시됩니다.
-
 ## 계정 관리
 
 - **계정 추가**는 공식 `codex login` 흐름을 파일 기반 인증 저장 방식으로 격리된 임시 `CODEX_HOME`에서 실행한 뒤, 생성된 인증 snapshot을 로컬 계정 registry에 저장합니다.
 - **계정 전환**은 활성 Codex `auth.json`을 선택한 저장 snapshot으로 교체하고 검증합니다. 검증에 실패하면 이전 auth와 registry 상태를 복원합니다.
 - **계정 삭제**는 비활성 계정에서만 가능합니다. 삭제는 저장된 auth snapshot과 registry 항목을 함께 제거하며, 실패 시 registry와 snapshot이 서로 어긋나지 않도록 복원합니다.
 - **진행 중인 Codex 작업 경고**는 로컬 Codex 앱이 승인 또는 사용자 입력을 기다리는 작업을 포함해 활성 thread를 보고할 때 계정 전환 전에 표시됩니다.
-- **Codex 앱 재시작**은 전환 성공 후 `/Applications/Codex.app` 또는 `com.openai.codex`만 대상으로 시도합니다. ChatGPT는 대상에 포함하지 않습니다. CodexHub는 Codex를 강제 종료하지 않으며, Codex가 작업 인터럽트 확인을 표시하면 사용자의 선택을 기다리고 Codex가 계속 열려 있으면 재시작을 취소합니다.
-- 확인 overlay의 비파괴 선택지는 **취소**로 표시되며, `Esc` 키도 같은 취소 동작을 수행합니다.
+- **Codex 앱 새로 열기**는 계정 전환이 끝난 뒤 선택한 계정이 반영되도록 시도됩니다. CodexHub는 Codex를 강제로 종료하지 않으며, Codex가 작업 중단 확인을 기다리는 경우 사용자가 직접 선택할 수 있게 둡니다.
 
 ## 사용량 및 할당량
 
