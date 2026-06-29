@@ -41,20 +41,19 @@ struct DashboardView: View {
     }
 
     private var dashboardContent: some View {
-        ZStack(alignment: .topLeading) {
-            VStack(alignment: .leading, spacing: 16) {
-                header
-                summaryGrid
-                trendPanel
-                breakdownGrid
-                heatmapPanel
-            }
-            .opacity(shouldCoverDashboardContent ? 0 : 1)
-            .transaction { transaction in
-                transaction.animation = nil
-                transaction.disablesAnimations = true
-            }
-
+        VStack(alignment: .leading, spacing: 16) {
+            header
+            summaryGrid
+            trendPanel
+            breakdownGrid
+            heatmapPanel
+        }
+        .opacity(shouldCoverDashboardContent ? 0 : 1)
+        .transaction { transaction in
+            transaction.animation = nil
+            transaction.disablesAnimations = true
+        }
+        .overlay(alignment: .topLeading) {
             if shouldCoverDashboardContent {
                 dashboardLoadingOverlay
                     .zIndex(1)
@@ -65,7 +64,14 @@ struct DashboardView: View {
     }
 
     private var shouldCoverDashboardContent: Bool {
-        (isAwaitingFirstDashboardLoad && model.dashboardSnapshot.isEmpty) || (model.isLoadingDashboard && showsLoadingChrome)
+        (isAwaitingFirstDashboardLoad && model.dashboardSnapshot.isEmpty) ||
+            dashboardRangeMismatch ||
+            (model.isLoadingDashboard && showsLoadingChrome)
+    }
+
+    private var dashboardRangeMismatch: Bool {
+        guard model.dashboardSnapshot.isEmpty == false, let dashboardRangeDays = model.dashboardRangeDays else { return false }
+        return dashboardRangeDays != selectedDays
     }
 
     private var dashboardLoadingOverlay: some View {
@@ -80,6 +86,7 @@ struct DashboardView: View {
             skeletonPanel(title: L.last30Days, height: 130)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxHeight: .infinity, alignment: .topLeading)
         .background(Color(nsColor: .windowBackgroundColor))
     }
 
@@ -192,7 +199,7 @@ struct DashboardView: View {
     private var trendPanel: some View {
         dashboardPanel(title: L.tokenTrend) {
             if loadingOrEmpty {
-                dashboardPlaceholder
+                dashboardPlaceholder(height: 240)
             } else {
                 Chart(model.dashboardSnapshot.dailySeries) { point in
                     BarMark(
@@ -202,7 +209,18 @@ struct DashboardView: View {
                     .foregroundStyle(Color.accentColor.opacity(0.76))
                 }
                 .chartXAxis {
-                    AxisMarks(values: .automatic(desiredCount: 8))
+                    AxisMarks(values: .automatic(desiredCount: 8)) { value in
+                        AxisGridLine()
+                        AxisTick()
+                        AxisValueLabel {
+                            if let date = value.as(Date.self) {
+                                Text(Format.chartAxisDate(date))
+                                    .font(.system(size: 10, weight: .medium))
+                                    .lineLimit(1)
+                                    .fixedSize(horizontal: true, vertical: false)
+                            }
+                        }
+                    }
                 }
                 .chartYAxis {
                     AxisMarks(position: .leading)
@@ -222,7 +240,7 @@ struct DashboardView: View {
     private var heatmapPanel: some View {
         dashboardPanel(title: L.last30Days) {
             if loadingOrEmpty {
-                dashboardPlaceholder
+                dashboardPlaceholder(height: 130)
             } else {
                 let maxTokens = max(model.dashboardSnapshot.calendarHeatmap.map { $0.aggregate.billingTokenTotal }.max() ?? 0, 1)
                 LazyVGrid(columns: Array(repeating: GridItem(.fixed(22), spacing: 5), count: 10), spacing: 5) {
@@ -239,7 +257,7 @@ struct DashboardView: View {
         }
     }
 
-    private var dashboardPlaceholder: some View {
+    private func dashboardPlaceholder(height: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             if model.isLoadingDashboard {
                 HStack(spacing: 10) {
@@ -261,7 +279,7 @@ struct DashboardView: View {
                     .foregroundStyle(.secondary)
             }
         }
-        .frame(height: 130, alignment: .center)
+        .frame(height: height, alignment: .center)
     }
 
     private var loadingOrEmpty: Bool {
@@ -299,7 +317,7 @@ struct DashboardView: View {
     private func breakdownPanel(title: String, rows: [DashboardBreakdown]) -> some View {
         dashboardPanel(title: title) {
             if loadingOrEmpty || rows.isEmpty {
-                dashboardPlaceholder
+                dashboardPlaceholder(height: 240)
             } else {
                 Chart(Array(rows.prefix(8))) { row in
                     BarMark(

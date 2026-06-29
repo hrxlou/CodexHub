@@ -56,10 +56,36 @@ final class FormatTests: XCTestCase {
         XCTAssertEqual(Format.preciseTokens(90_630_000), "9063만")
     }
 
+    func testChartAxisDateUsesCompactLabels() {
+        var components = DateComponents()
+        components.calendar = Calendar(identifier: .gregorian)
+        components.timeZone = TimeZone(secondsFromGMT: 0)
+        components.year = 2026
+        components.month = 6
+        components.day = 29
+        let date = components.date!
+
+        XCTAssertEqual(Format.chartAxisDate(date), "Jun 29")
+        XCTAssertEqual(Format.chartAxisDate(date, component: .month), "Jun")
+
+        UserDefaults.standard.set(AppLanguage.korean.rawValue, forKey: HubSettings.Keys.language)
+        XCTAssertEqual(Format.chartAxisDate(date), "6월 29일")
+        XCTAssertEqual(Format.chartAxisDate(date, component: .month), "6월")
+    }
+
     func testQuotaResetParsesUsageText() {
         XCTAssertEqual(Format.quotaReset(from: "60% (09:05)", kind: .fiveHour), "09:05")
-        XCTAssertEqual(Format.quotaReset(from: "60% (2026-06-26)", kind: .weekly), "26 Jun")
+        XCTAssertEqual(Format.quotaReset(from: "60% (2026-06-26)", kind: .weekly), "Jun 26")
         XCTAssertEqual(Format.quotaReset(from: "-", kind: .fiveHour), "--:--")
         XCTAssertEqual(Format.quotaReset(from: "-", kind: .weekly), "--")
+    }
+
+    func testUsageProgressAndRecordCountsAreLocalizedNaturally() {
+        XCTAssertEqual(L.ledgerRecordCount(125), "125 ledger records")
+        XCTAssertEqual(L.usageScanProgress(completed: 12, total: 125), "Scanning 12 of 125 files")
+
+        UserDefaults.standard.set(AppLanguage.korean.rawValue, forKey: HubSettings.Keys.language)
+        XCTAssertEqual(L.ledgerRecordCount(125), "사용 기록 125개")
+        XCTAssertEqual(L.usageScanProgress(completed: 12, total: 125), "125개 파일 중 12개 확인 중")
     }
 }

@@ -34,7 +34,7 @@ final class CodexAuthService {
             switch self {
             case .on: return L.text(ko: "켜짐", en: "On")
             case .off: return L.text(ko: "꺼짐", en: "Off")
-            case .fallback: return L.text(ko: "참고 표시", en: "Fallback")
+            case .fallback: return L.text(ko: "로컬 기록", en: "Local records")
             case .failed: return L.text(ko: "실패", en: "Failed")
             }
         }

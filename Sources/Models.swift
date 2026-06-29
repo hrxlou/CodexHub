@@ -162,10 +162,10 @@ struct CodexAccount: Codable, Equatable {
             email: email,
             alias: alias,
             plan: plan,
-            fiveHourUsage: fiveHourUsedPercent == nil ? "Unavailable" : fiveHourUsage,
+            fiveHourUsage: fiveHourUsedPercent == nil ? L.unavailable : fiveHourUsage,
             fiveHourUsedPercent: fiveHourUsedPercent,
             fiveHourQuotaKind: fiveHourQuotaKind,
-            weeklyUsage: weeklyUsedPercent == nil || weeklyUsage == "-" ? "Unavailable" : weeklyUsage,
+            weeklyUsage: weeklyUsedPercent == nil || weeklyUsage == "-" ? L.unavailable : weeklyUsage,
             weeklyUsedPercent: weeklyUsedPercent,
             weeklyQuotaKind: weeklyQuotaKind,
             lastActivity: lastActivity,
@@ -645,7 +645,19 @@ struct Format {
             formatter.dateFormat = "M월 d일"
         } else {
             formatter.locale = Locale(identifier: "en_US_POSIX")
-            formatter.dateFormat = "d MMM"
+            formatter.dateFormat = "MMM d"
+        }
+        return formatter.string(from: date)
+    }
+
+    static func chartAxisDate(_ date: Date, component: Calendar.Component = .day) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = AppLanguage.current == .korean ? Locale(identifier: "ko_KR") : Locale(identifier: "en_US_POSIX")
+        switch component {
+        case .month:
+            formatter.dateFormat = AppLanguage.current == .korean ? "M월" : "MMM"
+        default:
+            formatter.dateFormat = AppLanguage.current == .korean ? "M월 d일" : "MMM d"
         }
         return formatter.string(from: date)
     }
@@ -752,7 +764,7 @@ struct Format {
     }
 
     static func relative(_ date: Date?) -> String {
-        guard let date else { return L.text(ko: "업데이트 없음", en: "Updated --") }
+        guard let date else { return L.text(ko: "아직 업데이트되지 않음", en: "Not updated yet") }
         let seconds = max(Int(Date().timeIntervalSince(date)), 0)
         if seconds < 60 { return L.text(ko: "방금 업데이트", en: "Updated just now") }
         let minutes = seconds / 60

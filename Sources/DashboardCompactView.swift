@@ -11,6 +11,8 @@ struct DashboardCompactView: View {
 
     private let ranges = [7, 30, 90, 365]
     private let calendar = Calendar.current
+    private let bottomCardContentHeight: CGFloat = 96
+    private let bottomAccountCardWidth: CGFloat = 244
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -18,20 +20,26 @@ struct DashboardCompactView: View {
             dashboardContent
         }
         .onAppear {
-            displayedDays = selectedDays
+            if model.dashboardRangeDays == selectedDays {
+                displayedDays = selectedDays
+            }
             model.loadDashboard(force: false, days: selectedDays)
             updateLoadingPresentation(isLoading: model.isLoadingDashboard)
             if model.isLoadingDashboard == false {
+                syncDisplayedDaysIfCurrentSelectionIsLoaded()
                 isAwaitingFirstDashboardLoad = false
             }
         }
         .onChange(of: selectedDays) { _, newValue in
             model.loadDashboard(force: false, days: newValue)
             updateLoadingPresentation(isLoading: model.isLoadingDashboard)
+            if model.isLoadingDashboard == false {
+                syncDisplayedDaysIfCurrentSelectionIsLoaded()
+            }
         }
         .onChange(of: model.isLoadingDashboard) { _, isLoading in
             if isLoading == false {
-                displayedDays = selectedDays
+                syncDisplayedDaysIfCurrentSelectionIsLoaded()
                 isAwaitingFirstDashboardLoad = false
             }
             updateLoadingPresentation(isLoading: isLoading)
@@ -46,34 +54,33 @@ struct DashboardCompactView: View {
                 bottomGrid
             }
             .opacity(shouldCoverDashboardContent ? 0 : 1)
-            .transaction { transaction in
-                transaction.animation = nil
-                transaction.disablesAnimations = true
-            }
 
-            if shouldCoverDashboardContent {
-                loadingOverlay
-                    .zIndex(1)
-            }
+            loadingOverlay
+                .opacity(shouldCoverDashboardContent ? 1 : 0)
+                .allowsHitTesting(shouldCoverDashboardContent)
+                .zIndex(1)
+        }
+        .transaction { transaction in
+            transaction.animation = nil
+            transaction.disablesAnimations = true
         }
     }
 
     private var loadingOverlay: some View {
-        ZStack {
-            skeletonDashboard
-                .transition(.opacity)
-        }
-        .frame(maxWidth: .infinity)
+        skeletonDashboard
+            .frame(maxWidth: .infinity, alignment: .topLeading)
         .background(Color(nsColor: .windowBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-        )
     }
 
     private var shouldCoverDashboardContent: Bool {
-        (isAwaitingFirstDashboardLoad && snapshot.isEmpty) || (model.isLoadingDashboard && showsLoadingChrome)
+        (isAwaitingFirstDashboardLoad && snapshot.isEmpty) ||
+            dashboardRangeMismatch ||
+            (model.isLoadingDashboard && showsLoadingChrome)
+    }
+
+    private var dashboardRangeMismatch: Bool {
+        guard snapshot.isEmpty == false, let dashboardRangeDays = model.dashboardRangeDays else { return false }
+        return dashboardRangeDays != selectedDays
     }
 
     private var skeletonDashboard: some View {
@@ -82,7 +89,9 @@ struct DashboardCompactView: View {
             skeletonTrendCard
             HStack(alignment: .top, spacing: 12) {
                 skeletonAccountCard
+                    .frame(width: bottomAccountCardWidth)
                 skeletonActivityCard
+                    .frame(maxWidth: .infinity)
             }
         }
         .padding(0)
@@ -135,15 +144,15 @@ struct DashboardCompactView: View {
                 ForEach(0..<3, id: \.self) { index in
                     VStack(alignment: .leading, spacing: 6) {
                         HStack {
-                            skeletonLine(width: index == 0 ? 190 : 160, height: 12)
+                            skeletonLine(width: index == 0 ? 126 : 112, height: 12)
                             Spacer()
-                            skeletonLine(width: 98, height: 12)
+                            skeletonLine(width: 72, height: 12)
                         }
                         skeletonLine(width: nil, height: 8, cornerRadius: 4)
                     }
                 }
             }
-            .frame(minHeight: 118, alignment: .top)
+            .frame(height: bottomCardContentHeight, alignment: .top)
         }
     }
 
@@ -158,7 +167,8 @@ struct DashboardCompactView: View {
                 .frame(width: activityGridWidth)
                 skeletonLine(width: 150, height: 10)
             }
-            .frame(maxWidth: .infinity, minHeight: 118, alignment: .center)
+            .frame(height: bottomCardContentHeight, alignment: .center)
+            .frame(maxWidth: .infinity)
         }
     }
 
@@ -205,6 +215,12 @@ struct DashboardCompactView: View {
         }
     }
 
+    private func syncDisplayedDaysIfCurrentSelectionIsLoaded() {
+        if model.dashboardRangeDays == selectedDays {
+            displayedDays = selectedDays
+        }
+    }
+
     private var summaryCard: some View {
         HStack(alignment: .center, spacing: 16) {
             VStack(alignment: .leading, spacing: 12) {
@@ -230,7 +246,7 @@ struct DashboardCompactView: View {
     private var trendCard: some View {
         dashboardPanel(title: L.tokenTrend, accessory: snapshot.scannedFiles > 0 ? L.ledgerRecordCount(snapshot.scannedFiles) : nil) {
             if hasData == false {
-                emptyState(height: 108)
+                emptyState(height: 128)
             } else {
                 Chart(trendPoints) { point in
                     BarMark(
@@ -240,7 +256,18 @@ struct DashboardCompactView: View {
                     .foregroundStyle(Color.accentColor.opacity(0.74))
                 }
                 .chartXAxis {
-                    AxisMarks(values: .automatic(desiredCount: displayedDays == 7 ? 7 : 6))
+                    AxisMarks(values: .automatic(desiredCount: displayedDays == 7 ? 7 : 6)) { value in
+                        AxisGridLine()
+                        AxisTick()
+                        AxisValueLabel {
+                            if let date = value.as(Date.self) {
+                                Text(Format.chartAxisDate(date, component: trendDateUnit))
+                                    .font(.system(size: 10, weight: .medium))
+                                    .lineLimit(1)
+                                    .fixedSize(horizontal: true, vertical: false)
+                            }
+                        }
+                    }
                 }
                 .chartYAxis {
                     AxisMarks(position: .leading, values: .automatic(desiredCount: 4)) { value in
@@ -262,21 +289,24 @@ struct DashboardCompactView: View {
     private var bottomGrid: some View {
         HStack(alignment: .top, spacing: 12) {
             accountCard
+                .frame(width: bottomAccountCardWidth)
             activityCard
+                .frame(maxWidth: .infinity)
         }
     }
 
     private var accountCard: some View {
         dashboardPanel(title: L.byAccount) {
             if hasData == false || accountRows.isEmpty {
-                emptyState(height: 118)
+                emptyState(height: bottomCardContentHeight)
             } else {
                 VStack(spacing: 9) {
                     let maxTokens = max(accountRows.map { $0.aggregate.billingTokenTotal }.max() ?? 0, 1)
-                    ForEach(Array(accountRows.prefix(4))) { row in
+                    ForEach(Array(accountRows.prefix(3))) { row in
                         accountUsageRow(row, maxTokens: maxTokens)
                     }
                 }
+                .frame(height: bottomCardContentHeight, alignment: .center)
             }
         }
     }
@@ -284,7 +314,7 @@ struct DashboardCompactView: View {
     private var activityCard: some View {
         dashboardPanel(title: L.activityPattern) {
             if hasData == false || activityPoints.isEmpty {
-                emptyState(height: 118)
+                emptyState(height: bottomCardContentHeight)
             } else {
                 activityPattern
             }
@@ -424,7 +454,8 @@ struct DashboardCompactView: View {
                 .frame(maxWidth: .infinity, alignment: .center)
                 .lineLimit(2)
         }
-        .frame(maxWidth: .infinity, minHeight: 118, alignment: .center)
+        .frame(height: bottomCardContentHeight, alignment: .center)
+        .frame(maxWidth: .infinity)
     }
 
     private var activityPoints: [DashboardSeriesPoint] {

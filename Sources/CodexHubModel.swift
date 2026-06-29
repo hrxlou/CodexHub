@@ -28,6 +28,7 @@ final class CodexHubModel: ObservableObject {
     @Published var usageDetailsProgressText: String?
     @Published var dashboardProgress: Double?
     @Published var dashboardProgressText: String?
+    @Published private(set) var dashboardRangeDays: Int?
     @Published var dashboardOpenRequest: UUID?
     @Published var switchingAccountEmail: String?
     @Published var removingAccountIdentity: String?
@@ -39,7 +40,8 @@ final class CodexHubModel: ObservableObject {
     private var lastAutoSwitchSignature: String?
     private var lastUsageDetailsRefreshDate: Date?
     private var lastDashboardRefreshDate: Date?
-    private var dashboardRangeDays: Int?
+    private var loadingDashboardRangeDays: Int?
+    private var pendingDashboardRequest: (force: Bool, days: Int)?
     private var refreshGeneration = 0
     private var usageDetailsGeneration = 0
     private var dashboardGeneration = 0
@@ -301,6 +303,14 @@ final class CodexHubModel: ObservableObject {
     }
 
     func loadDashboard(force: Bool, days: Int = 30) {
+        if isLoadingDashboard {
+            if loadingDashboardRangeDays != days || force {
+                let shouldForce = force || pendingDashboardRequest?.force == true
+                pendingDashboardRequest = (shouldForce, days)
+            }
+            return
+        }
+
         if dashboardSnapshot.isEmpty == false && !force {
             if let lastDashboardRefreshDate,
                dashboardRangeDays == days,
@@ -310,6 +320,7 @@ final class CodexHubModel: ObservableObject {
         }
         guard !isLoadingDashboard else { return }
         isLoadingDashboard = true
+        loadingDashboardRangeDays = days
         dashboardProgress = 0
         dashboardProgressText = nil
         dashboardGeneration += 1
@@ -334,8 +345,13 @@ final class CodexHubModel: ObservableObject {
                 self.lastDashboardRefreshDate = Date()
                 self.dashboardRangeDays = days
                 self.isLoadingDashboard = false
+                self.loadingDashboardRangeDays = nil
                 self.dashboardProgress = nil
                 self.dashboardProgressText = nil
+                if let pendingRequest = self.pendingDashboardRequest {
+                    self.pendingDashboardRequest = nil
+                    self.loadDashboard(force: pendingRequest.force, days: pendingRequest.days)
+                }
             }
         }
     }
@@ -409,6 +425,8 @@ final class CodexHubModel: ObservableObject {
         usageDetailsProgress = nil
         usageDetailsProgressText = nil
         isLoadingDashboard = false
+        loadingDashboardRangeDays = nil
+        pendingDashboardRequest = nil
         dashboardProgress = nil
         dashboardProgressText = nil
     }

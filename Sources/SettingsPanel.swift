@@ -58,7 +58,7 @@ extension CodexHubMenu {
                 }
             }
 
-            sectionCard(title: L.text(ko: "고급", en: "Advanced")) {
+            sectionCard(title: L.advanced) {
                 disclosureRow(title: L.privacy, isExpanded: $privacySettingsExpanded)
                 if privacySettingsExpanded {
                     privacyControls
