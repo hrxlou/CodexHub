@@ -186,6 +186,7 @@ final class CodexHubModel: ObservableObject {
         guard let target = accounts.first(where: { $0.identity == identity }) else { return }
         guard target.isActive != true else { return }
         guard !isSwitchingAccount else { return }
+        guard confirmCodexAppThreadSwitchIfNeeded() else { return }
         invalidateRefreshResults()
         switchingAccountEmail = target.email
         isRefreshing = true
@@ -430,6 +431,26 @@ final class CodexHubModel: ObservableObject {
         if alert.runModal() == .alertFirstButtonReturn {
             switchAccount(candidate.identity)
         }
+    }
+
+    private func confirmCodexAppThreadSwitchIfNeeded() -> Bool {
+        guard let activity = authService.codexAppThreadActivity(),
+              activity.hasActiveThreads else {
+            return true
+        }
+
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = L.codexActiveThreadsTitle
+        alert.informativeText = L.codexActiveThreadsSwitchMessage(
+            activeCount: activity.activeThreadCount,
+            waitingOnApprovalCount: activity.waitingOnApprovalCount,
+            waitingOnUserInputCount: activity.waitingOnUserInputCount
+        )
+        alert.addButton(withTitle: L.notNow)
+        alert.addButton(withTitle: L.switchAccount)
+        NSApp.activate(ignoringOtherApps: true)
+        return alert.runModal() == .alertSecondButtonReturn
     }
 
     private func sendUsageReminder(account: CodexAccount, used: Int, remaining: Int) {

@@ -7,7 +7,7 @@ struct DashboardCompactView: View {
     @State private var selectedDays = 30
     @State private var displayedDays = 30
     @State private var showsLoadingChrome = false
-    @State private var loadingChromeToken = 0
+    @State private var isAwaitingFirstDashboardLoad = true
 
     private let ranges = [7, 30, 90, 365]
     private let calendar = Calendar.current
@@ -20,13 +20,19 @@ struct DashboardCompactView: View {
         .onAppear {
             displayedDays = selectedDays
             model.loadDashboard(force: false, days: selectedDays)
+            updateLoadingPresentation(isLoading: model.isLoadingDashboard)
+            if model.isLoadingDashboard == false {
+                isAwaitingFirstDashboardLoad = false
+            }
         }
         .onChange(of: selectedDays) { _, newValue in
             model.loadDashboard(force: false, days: newValue)
+            updateLoadingPresentation(isLoading: model.isLoadingDashboard)
         }
         .onChange(of: model.isLoadingDashboard) { _, isLoading in
             if isLoading == false {
                 displayedDays = selectedDays
+                isAwaitingFirstDashboardLoad = false
             }
             updateLoadingPresentation(isLoading: isLoading)
         }
@@ -67,7 +73,7 @@ struct DashboardCompactView: View {
     }
 
     private var shouldCoverDashboardContent: Bool {
-        model.isLoadingDashboard && showsLoadingChrome
+        (isAwaitingFirstDashboardLoad && snapshot.isEmpty) || (model.isLoadingDashboard && showsLoadingChrome)
     }
 
     private var skeletonDashboard: some View {
@@ -189,21 +195,13 @@ struct DashboardCompactView: View {
     }
 
     private func updateLoadingPresentation(isLoading: Bool) {
-        loadingChromeToken += 1
-        let token = loadingChromeToken
-
         if isLoading == false {
             showsLoadingChrome = false
             return
         }
 
-        showsLoadingChrome = false
-        Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 250_000_000)
-            guard token == loadingChromeToken, model.isLoadingDashboard else { return }
-            withAnimation(.easeOut(duration: 0.12)) {
-                showsLoadingChrome = true
-            }
+        withAnimation(.easeOut(duration: 0.12)) {
+            showsLoadingChrome = true
         }
     }
 

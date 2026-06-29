@@ -109,6 +109,7 @@ enum L {
     static var activeAccountCannotBeRemoved: String { text(ko: "활성 계정은 삭제할 수 없습니다", en: "The active account cannot be removed") }
     static var codexRestartRequired: String { text(ko: "계정 전환은 완료됐습니다. Codex 앱을 수동으로 다시 열어주세요", en: "Account switched. Reopen the Codex app manually.") }
     static var codexRestartBlockedByInterrupt: String { text(ko: "계정 전환은 완료됐습니다. Codex가 작업 인터럽트 확인을 기다려 재시작을 취소했습니다. Codex 경고에서 직접 선택하세요.", en: "Account switched. Codex is waiting for an interrupt confirmation, so restart was canceled. Choose directly in the Codex prompt.") }
+    static var codexActiveThreadsTitle: String { text(ko: "진행 중인 Codex 작업이 있습니다", en: "Codex has active work") }
     static var authorizedAccountOnly: String { text(ko: "타인 계정 저장 불가", en: "Do not store others' accounts") }
     static var totalCost: String { text(ko: "총 비용", en: "Total Cost") }
     static var billingTokens: String { text(ko: "청구 토큰", en: "Billing Tokens") }
@@ -172,6 +173,24 @@ enum L {
         text(
             ko: "\(activeAccount) \(activeQuotaLabel) \(activeRemaining)% 남음. \(candidateAccount) \(candidateQuotaLabel) \(candidateRemaining)% 남음. 승인 후 전환됩니다.",
             en: "\(activeAccount): \(activeRemaining)% \(activeQuotaLabel) left. \(candidateAccount): \(candidateRemaining)% \(candidateQuotaLabel) left. Switches only after approval."
+        )
+    }
+
+    static func codexActiveThreadsSwitchMessage(
+        activeCount: Int,
+        waitingOnApprovalCount: Int,
+        waitingOnUserInputCount: Int
+    ) -> String {
+        let waitingCount = waitingOnApprovalCount + waitingOnUserInputCount
+        if waitingCount > 0 {
+            return text(
+                ko: "Codex 앱에 승인 또는 입력을 기다리는 작업을 포함해 \(activeCount)개의 진행 중인 작업이 있습니다. 계정을 전환하면 해당 작업이 중단되거나 계정 상태가 바뀔 수 있습니다. 계속 전환할까요?",
+                en: "The Codex app has \(activeCount) active local thread(s), including work waiting for approval or input. Switching accounts may interrupt that work or change its account state. Continue switching?"
+            )
+        }
+        return text(
+            ko: "Codex 앱에 \(activeCount)개의 진행 중인 작업이 있습니다. 계정을 전환하면 해당 작업이 중단되거나 계정 상태가 바뀔 수 있습니다. 계속 전환할까요?",
+            en: "The Codex app has \(activeCount) active local thread(s). Switching accounts may interrupt that work or change its account state. Continue switching?"
         )
     }
 

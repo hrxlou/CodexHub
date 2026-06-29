@@ -6,7 +6,7 @@ struct DashboardView: View {
     @ObservedObject var model: CodexHubModel
     @State private var selectedDays = 30
     @State private var showsLoadingChrome = false
-    @State private var loadingChromeToken = 0
+    @State private var isAwaitingFirstDashboardLoad = true
 
     private let ranges = [30, 90, 365]
 
@@ -24,11 +24,18 @@ struct DashboardView: View {
         .onAppear {
             model.loadDashboard(force: false, days: selectedDays)
             updateLoadingPresentation(isLoading: model.isLoadingDashboard)
+            if model.isLoadingDashboard == false {
+                isAwaitingFirstDashboardLoad = false
+            }
         }
         .onChange(of: selectedDays) { _, newValue in
             model.loadDashboard(force: false, days: newValue)
+            updateLoadingPresentation(isLoading: model.isLoadingDashboard)
         }
         .onChange(of: model.isLoadingDashboard) { _, isLoading in
+            if isLoading == false {
+                isAwaitingFirstDashboardLoad = false
+            }
             updateLoadingPresentation(isLoading: isLoading)
         }
     }
@@ -58,7 +65,7 @@ struct DashboardView: View {
     }
 
     private var shouldCoverDashboardContent: Bool {
-        model.isLoadingDashboard && showsLoadingChrome
+        (isAwaitingFirstDashboardLoad && model.dashboardSnapshot.isEmpty) || (model.isLoadingDashboard && showsLoadingChrome)
     }
 
     private var dashboardLoadingOverlay: some View {
@@ -135,21 +142,13 @@ struct DashboardView: View {
     }
 
     private func updateLoadingPresentation(isLoading: Bool) {
-        loadingChromeToken += 1
-        let token = loadingChromeToken
-
         if isLoading == false {
             showsLoadingChrome = false
             return
         }
 
-        showsLoadingChrome = false
-        Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 250_000_000)
-            guard token == loadingChromeToken, model.isLoadingDashboard else { return }
-            withAnimation(.easeOut(duration: 0.12)) {
-                showsLoadingChrome = true
-            }
+        withAnimation(.easeOut(duration: 0.12)) {
+            showsLoadingChrome = true
         }
     }
 

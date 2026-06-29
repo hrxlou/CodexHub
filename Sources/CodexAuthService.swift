@@ -6,6 +6,9 @@ final class CodexAuthService {
     private let accountStore: CodexAccountStore
     private let appServerCacheURL: URL
     private let processRunner: ProcessRunner
+    private lazy var appActivityDetector = CodexAppActivityDetector { [weak self] in
+        self?.codexCLIPath()
+    }
 
     init(
         accountStore: CodexAccountStore = CodexAccountStore(),
@@ -92,6 +95,10 @@ final class CodexAuthService {
             }
         }
         return result
+    }
+
+    func codexAppThreadActivity() -> CodexAppThreadActivity? {
+        appActivityDetector.readThreadActivity()
     }
 
     func removeStoredAccount(_ identity: String) -> CommandResult {
